@@ -14,6 +14,59 @@ function formatDateValue(d) {
   return d.format("YYYY-MM-DD");
 }
 
+function monthLabel(d) {
+  return d.format("MMMM YYYY");
+}
+
+function createCalendarKeyboard(baseDate, timezone) {
+  const start = dayjs(baseDate).tz(timezone).startOf("month");
+  const end = dayjs(baseDate).tz(timezone).endOf("month");
+
+  const firstWeekday = start.day();
+
+  // Weekday short names (Ru locale assumed in dayjs setup)
+  const weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+
+  const rows = [];
+
+  // Navigation row
+  const prev = start.subtract(1, "month");
+  const next = start.add(1, "month");
+  rows.push([
+    Markup.button.callback("⬅️", `cal:${prev.format("YYYY-MM")}`),
+    Markup.button.callback(monthLabel(start), `cal:noop`),
+    Markup.button.callback("➡️", `cal:${next.format("YYYY-MM")}`),
+  ]);
+
+  // Weekday header
+  rows.push(weekdays.map((w) => Markup.button.callback(w, "cal:noop")));
+
+  // Fill blanks before first day (make Monday the first column)
+  let day = start.startOf("month");
+  const offset = (firstWeekday + 6) % 7; // convert Sunday(0) to position 6
+  for (let i = 0; i < offset; i += 1) day = day.subtract(1, "day");
+
+  // Build 6 weeks grid
+  for (let week = 0; week < 6; week += 1) {
+    const weekRow = [];
+    for (let d = 0; d < 7; d += 1) {
+      const isCurrentMonth = day.month() === start.month();
+      const label = isCurrentMonth ? `${day.date()}` : " ";
+      const callback = isCurrentMonth
+        ? `date:${day.format("YYYY-MM-DD")}`
+        : "cal:noop";
+      weekRow.push(Markup.button.callback(label, callback));
+      day = day.add(1, "day");
+    }
+    rows.push(weekRow);
+  }
+
+  // Back button
+  rows.push([Markup.button.callback("Назад ⬅️", "back_to_services")]);
+
+  return Markup.inlineKeyboard(rows);
+}
+
 function createBookingScene({ bookingService, sheetsService, config }) {
   const bookingScene = new Scenes.WizardScene(
     "booking",
@@ -66,22 +119,9 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       const timezone = await sheetsService.getTimezone();
       const now = dayjs().tz(timezone);
 
-      const days = [];
-      for (let i = 0; i < 7; i += 1) {
-        days.push(now.add(i, "day"));
-      }
+      const calendar = createCalendarKeyboard(now, timezone);
 
-      const keyboard = days.map((d) => [
-        Markup.button.callback(
-          formatDateLabel(d),
-          `date:${formatDateValue(d)}`
-        ),
-      ]);
-
-      // Добавляем кнопку "Назад" в конец
-      keyboard.push([Markup.button.callback("Назад ⬅️", "back_to_services")]);
-
-      await ctx.reply("Выбери дату:", Markup.inlineKeyboard(keyboard));
+      await ctx.reply("Выбери дату:", calendar);
 
       return ctx.wizard.next();
     },
@@ -93,14 +133,37 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       }
 
       const data = ctx.update.callback_query.data;
+
+      // Навигация назад к услугам
       if (data === "back_to_services") {
-        // Обработка кнопки "Назад" - возвращаемся к выбору услуги
         delete ctx.wizard.state.booking.dateStr;
         await ctx.answerCbQuery("Возвращаемся к выбору услуги");
         return ctx.wizard.selectStep(0);
       }
 
-      if (!data.startsWith("date:")) {
+      // Обработка навигации календаря (смена месяца)
+      if (data && data.startsWith("cal:")) {
+        await ctx.answerCbQuery();
+        const payload = data.slice("cal:".length);
+        if (payload === "noop") return;
+
+        // payload expected as YYYY-MM
+        const timezone = await sheetsService.getTimezone();
+        const base = dayjs.tz(`${payload}-01`, timezone);
+        const calendar = createCalendarKeyboard(base, timezone);
+
+        try {
+          await ctx.editMessageReplyMarkup(calendar.reply_markup);
+        } catch (e) {
+          // если не получилось отредактировать (например, нет прав), отправим новый
+          await ctx.reply("Выбери дату:", calendar);
+        }
+
+        return;
+      }
+
+      // Игнорируем noop и другие не-date колбэки
+      if (!data || !data.startsWith("date:")) {
         await ctx.answerCbQuery();
         return;
       }
@@ -118,11 +181,33 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       );
 
       if (!slots.length) {
-        await ctx.reply(
-          "На этот день нет свободных слотов. Попробуй выбрать другую дату командой /book.",
-          Markup.removeKeyboard()
-        );
-        return ctx.scene.leave();
+        // Уточняем, возможно день закрыт или просто нет слотов
+        const wh =
+          (sheetsService.getWorkHoursForDate &&
+            (await sheetsService.getWorkHoursForDate(dateStr))) ||
+          null;
+
+        if (!wh) {
+          await ctx.reply("В этот день барбершоп закрыт. Выбери другую дату.");
+        } else {
+          await ctx.reply(
+            `На этот день нет свободных слотов. Рабочие часы: ${wh.start}–${wh.end}. Попробуй выбрать другую дату.`
+          );
+        }
+
+        // Покажем календарь снова, чтобы пользователь мог выбрать другую дату
+        const timezone = await sheetsService.getTimezone();
+        const base = dayjs.tz(dateStr, timezone);
+        const calendar = createCalendarKeyboard(base, timezone);
+
+        try {
+          await ctx.reply("Выбери дату:", calendar);
+        } catch (e) {
+          // Игнорируем ошибки отправки повторного календаря
+        }
+
+        // Остаёмся в сцене (шаг обработки дат), чтобы обработать следующий callback
+        return;
       }
 
       const keyboard = [];
@@ -158,7 +243,22 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         // Обработка кнопки "Назад" - возвращаемся к выбору даты
         delete ctx.wizard.state.booking.timeStr;
         await ctx.answerCbQuery("Возвращаемся к выбору даты");
-        return ctx.wizard.selectStep(1);
+
+        // Покажем календарь снова (в том месяце, который был выбран, если есть)
+        const timezone = await sheetsService.getTimezone();
+        const dateBase =
+          (ctx.wizard.state.booking && ctx.wizard.state.booking.dateStr) ||
+          dayjs().tz(timezone).format("YYYY-MM-DD");
+        const base = dayjs.tz(dateBase, timezone);
+        const calendar = createCalendarKeyboard(base, timezone);
+
+        try {
+          await ctx.reply("Выбери дату:", calendar);
+        } catch (e) {
+          // Игнорируем ошибки отправки
+        }
+
+        return ctx.wizard.selectStep(2);
       }
 
       if (!data.startsWith("time:")) {
@@ -336,6 +436,12 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           // Возвращаемся к шагу выбора времени (шаг 3, так как индексация с 0)
           return ctx.wizard.selectStep(2);
         } else {
+          if (result.reason === "closed") {
+            await ctx.reply(
+              "Нельзя создать запись: в этот день барбершоп закрыт. Попробуй другую дату."
+            );
+            return ctx.scene.leave();
+          }
           await ctx.reply(
             "Не удалось создать запись из-за ошибки. Попробуй ещё раз позже.",
             Markup.removeKeyboard()

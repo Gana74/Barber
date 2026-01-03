@@ -159,7 +159,8 @@ function createBot({ config, sheetsService }) {
     await ctx.answerCbQuery("Отменяем запись...");
 
     const appointment = await sheetsService.getAppointmentById(id);
-    if (!appointment || appointment.status !== "active") {
+    // Используем русские статусы из bookingService
+    if (!appointment || appointment.status !== bookingService.STATUSES.ACTIVE) {
       await ctx.reply(
         "Не удалось отменить запись: она не найдена или уже отменена."
       );
@@ -173,9 +174,13 @@ function createBot({ config, sheetsService }) {
     }
 
     const cancelledAtUtc = new Date().toISOString();
-    const ok = await sheetsService.updateAppointmentStatus(id, "cancelled", {
-      cancelledAtUtc,
-    });
+    const ok = await sheetsService.updateAppointmentStatus(
+      id,
+      bookingService.STATUSES.CANCELLED,
+      {
+        cancelledAtUtc,
+      }
+    );
 
     if (!ok) {
       await ctx.reply(

@@ -1,55 +1,53 @@
-// Конфиг проекта: env, таймзона, ID таблицы и пр.
-// Комментарий: используй .env для локальной разработки
+// Точка входа бота
+// Загружает конфиг, инициализирует Google Sheets, бота и cron-напоминания
 
-const path = require("path");
-const dotenv = require("dotenv");
+// Модуль конфигурации приложения
+// Загружает переменные окружения и предоставляет доступ к настройкам
 
-let isEnvLoaded = false;
+require("dotenv").config();
 
-function loadEnv() {
-  if (isEnvLoaded) return;
-
-  // Комментарий: загружаем .env из корня проекта
-  dotenv.config({
-    path: path.resolve(process.cwd(), ".env"),
-  });
-
-  isEnvLoaded = true;
-}
-
+// Комментарий: функция инициализации конфигурации
 function initConfig() {
-  loadEnv();
+  // Комментарий: проверяем наличие критичных переменных окружения
+  const requiredEnvVars = ["BOT_TOKEN", "GOOGLE_SHEETS_ID", "GOOGLE_CLIENT_EMAIL", "GOOGLE_PRIVATE_KEY"];
+  
+  for (const envVar of requiredEnvVars) {
+    if (!process.env[envVar]) {
+      console.warn(`⚠️  Внимание: переменная окружения ${envVar} не задана!`);
+    }
+  }
 
   const config = {
+    // Токен Telegram-бота
     botToken: process.env.BOT_TOKEN,
+    
+    // Настройки Google Sheets
     google: {
       sheetsId: process.env.GOOGLE_SHEETS_ID,
       clientEmail: process.env.GOOGLE_CLIENT_EMAIL,
-      privateKey: process.env.GOOGLE_PRIVATE_KEY
-        ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n")
-        : undefined,
+      privateKey: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
     },
+    
+    // Таймзона по умолчанию (можно переопределить в Google Sheets)
     defaultTimezone: process.env.DEFAULT_TIMEZONE || "Asia/Yekaterinburg",
-    managerChatId: process.env.MANAGER_CHAT_ID
-      ? Number(process.env.MANAGER_CHAT_ID)
-      : undefined,
-    // Комментарий: рабочие часы салона по умолчанию
+    
+    // Chat ID менеджера для уведомлений
+    managerChatId: process.env.MANAGER_CHAT_ID,
+    
+    // Контакты для уведомлений
+    barberPhone: process.env.BARBER_PHONE,
+    barberAddress: process.env.BARBER_ADDRESS,
+    
+    // Рабочие часы (в формате 24h)
     workday: {
-      startHour: 10,
-      endHour: 20,
+      startHour: parseInt(process.env.WORKDAY_START_HOUR, 10) || 10,
+      endHour: parseInt(process.env.WORKDAY_END_HOUR, 10) || 20,
     },
+    
+    // Включить приветственные напоминания за день
+    enableWelcomeReminder: process.env.ENABLE_WELCOME_REMINDER === "true",
   };
-
-  if (!config.botToken) {
-    throw new Error("BOT_TOKEN is required");
-  }
-  if (!config.google.sheetsId) {
-    throw new Error("GOOGLE_SHEETS_ID is required");
-  }
-  if (!config.google.clientEmail || !config.google.privateKey) {
-    throw new Error("Google service account credentials are required");
-  }
-
+  
   return config;
 }
 

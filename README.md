@@ -67,7 +67,7 @@ node index.js
 
 - `Settings` — ключ/значение (колонки: `key`, `value`). Используется для хранения `timezone`.
 - `Schedule` — колонки: `date`, `time_start`, `time_end`, `status`, `service`, `note`. Для блокировок используйте `status=blocked`.
-- `Appointments` — колонки: `id`, `created_at_utc`, `service`, `date`, `time_start`, `time_end`, `client_name`, `phone`, `username`, `comment`, `status`, `cancel_code`, `telegram_id`, `chat_id`, `cancelled_at_utc`.
+- `Appointments` — колонки: `id`, `created_at_utc`, `service`, `date`, `time_start`, `time_end`, `client_name`, `phone`, `username`, `comment`, `status`, `cancel_code`, `telegram_id`, `chat_id`, `cancelled_at_utc`, `completed_at_utc`.
 - `Clients` — колонки: `client_id`, `first_seen_utc`, `telegram_id`, `username`, `name`, `phone`, `last_appointment_at_utc`, `total_appointments`.
 
 ## Как это работает (коротко)
@@ -90,6 +90,7 @@ node index.js
 
 - Ежедневно в 10:00 (по таймзоне салона) бот отправляет напоминания о записях на завтра.
 - Каждые 5 минут проверяется окно «~2 часа до записи» и отправляются одноразовые напоминания клиентам.
+- Каждые 30 минут автоматически завершаются прошедшие записи: статус меняется на "исполнено" сразу после окончания времени услуги.
 
 ## Безопасность и заметки по развёртыванию
 
@@ -102,5 +103,3 @@ node index.js
 - Конфигурация: [src/config/index.js](src/config/index.js)
 - Бот и сцены: [src/bot/index.js](src/bot/index.js), [src/bot/scenes/bookingScene.js](src/bot/scenes/bookingScene.js)
 - Сервисы: [src/services/googleSheets.js](src/services/googleSheets.js), [src/services/booking.js](src/services/booking.js), [src/services/reminders.js](src/services/reminders.js)
-
-

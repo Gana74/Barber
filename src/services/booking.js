@@ -19,6 +19,14 @@ const SERVICES = {
   },
 };
 
+// Статусы на русском
+const STATUSES = {
+  ACTIVE: "активна",
+  CANCELLED: "отменена",
+  COMPLETED: "исполнено",
+  BLOCKED: "заблокировано",
+};
+
 function getServiceList() {
   return Object.values(SERVICES);
 }
@@ -50,32 +58,45 @@ function buildSlotsForDay({
   appointments,
 }) {
   const serviceDuration = service.durationMin;
+  let dayStart;
+  let dayEnd;
 
-  const dayStart = dayjs.tz(
-    `${dateStr}T${String(workday.startHour).padStart(2, "0")}:00:00`,
-    timezone
-  );
-  const dayEnd = dayjs.tz(
-    `${dateStr}T${String(workday.endHour).padStart(2, "0")}:00:00`,
-    timezone
-  );
+  if (workday && workday.startHour != null) {
+    dayStart = dayjs.tz(
+      `${dateStr}T${String(workday.startHour).padStart(2, "0")}:00:00`,
+      timezone
+    );
+    dayEnd = dayjs.tz(
+      `${dateStr}T${String(workday.endHour).padStart(2, "0")}:00:00`,
+      timezone
+    );
+  } else if (workday && workday.start && workday.end) {
+    // workday.start/end expected as 'HH:mm'
+    dayStart = dayjs.tz(`${dateStr}T${workday.start}:00`, timezone);
+    dayEnd = dayjs.tz(`${dateStr}T${workday.end}:00`, timezone);
+  } else {
+    // No working hours provided -> closed
+    return [];
+  }
 
   const busyIntervals = [];
 
-  // blocked из Schedule
+  // blocked из Schedule (русский статус)
   schedule.forEach((row) => {
-    if (row.status === "blocked") {
+    if (row.status === STATUSES.BLOCKED) {
       const start = dayjs.tz(`${row.date}T${row.timeStart}:00`, timezone);
       const end = dayjs.tz(`${row.date}T${row.timeEnd}:00`, timezone);
       busyIntervals.push({ start, end });
     }
   });
 
-  // занятые записи
+  // занятые записи (только активные)
   appointments.forEach((row) => {
-    const start = dayjs.tz(`${row.date}T${row.timeStart}:00`, timezone);
-    const end = dayjs.tz(`${row.date}T${row.timeEnd}:00`, timezone);
-    busyIntervals.push({ start, end });
+    if (row.status === STATUSES.ACTIVE) {
+      const start = dayjs.tz(`${row.date}T${row.timeStart}:00`, timezone);
+      const end = dayjs.tz(`${row.date}T${row.timeEnd}:00`, timezone);
+      busyIntervals.push({ start, end });
+    }
   });
 
   const slots = [];
@@ -128,11 +149,20 @@ function createBookingService({ sheetsService, config }) {
       dateStr
     );
 
+    const workHours =
+      (sheetsService.getWorkHoursForDate &&
+        (await sheetsService.getWorkHoursForDate(dateStr))) ||
+      null;
+
+    if (!workHours) {
+      return { service, timezone, slots: [] };
+    }
+
     const slots = buildSlotsForDay({
       dateStr,
       service,
       timezone,
-      workday: config.workday,
+      workday: workHours,
       schedule,
       appointments,
     });
@@ -145,17 +175,21 @@ function createBookingService({ sheetsService, config }) {
     const { schedule, appointments } = await sheetsService.getDaySchedule(
       dateStr
     );
+    const workHours =
+      (sheetsService.getWorkHoursForDate &&
+        (await sheetsService.getWorkHoursForDate(dateStr))) ||
+      null;
 
-    const { slots } = {
-      slots: buildSlotsForDay({
-        dateStr,
-        service,
-        timezone,
-        workday: config.workday,
-        schedule,
-        appointments,
-      }),
-    };
+    if (!workHours) return false;
+
+    const slots = buildSlotsForDay({
+      dateStr,
+      service,
+      timezone,
+      workday: workHours,
+      schedule,
+      appointments,
+    });
 
     return slots.some((slot) => slot.timeStr === timeStr);
   }
@@ -173,6 +207,15 @@ function createBookingService({ sheetsService, config }) {
     }
 
     const timezone = await sheetsService.getTimezone();
+    // Проверяем рабочие часы дня
+    const workHours =
+      (sheetsService.getWorkHoursForDate &&
+        (await sheetsService.getWorkHoursForDate(dateStr))) ||
+      null;
+
+    if (!workHours) {
+      return { ok: false, reason: "closed" };
+    }
 
     // Повторная проверка: слот ещё свободен?
     const free = await isSlotFree({ dateStr, timeStr, service });
@@ -198,7 +241,7 @@ function createBookingService({ sheetsService, config }) {
       phone: client.phone,
       username: client.username || "",
       comment: comment || "",
-      status: "active",
+      status: STATUSES.ACTIVE,
       cancelCode,
       telegramId: client.telegramId,
       chatId: client.chatId,
@@ -215,17 +258,93 @@ function createBookingService({ sheetsService, config }) {
       lastAppointmentAtUtc: createdAtUtc,
     });
 
+    // Дополнительная проверка на гонку: читаем активные записи на этот день
+    // и если есть пересечение более чем одной записи на тот же интервал,
+    // отменяем позднюю (те, что созданы позже). Это делает операцию
+    // идемпотентной при параллельных запросах к одному слоту.
+    try {
+      const dayAppointments = await sheetsService.getAppointmentsByDate(
+        dateStr
+      );
+
+      const overlapping = dayAppointments.filter((a) => {
+        const aStart = dayjs.tz(`${a.date}T${a.timeStart}:00`, timezone);
+        const aEnd = dayjs.tz(`${a.date}T${a.timeEnd}:00`, timezone);
+        return intervalsOverlap(
+          start.valueOf(),
+          end.valueOf(),
+          aStart.valueOf(),
+          aEnd.valueOf()
+        );
+      });
+
+      if (overlapping.length > 1) {
+        overlapping.sort((x, y) => {
+          if (x.createdAtUtc === y.createdAtUtc)
+            return x.id.localeCompare(y.id);
+          return x.createdAtUtc < y.createdAtUtc ? -1 : 1;
+        });
+        const winner = overlapping[0];
+        if (winner.id !== id) {
+          const cancelledAtUtc = dayjs().utc().toISOString();
+          await sheetsService.updateAppointmentStatus(id, STATUSES.CANCELLED, {
+            cancelledAtUtc,
+          });
+          return { ok: false, reason: "slot_taken" };
+        }
+      }
+    } catch (e) {
+      // В случае ошибки проверки — не ломаем основной поток: считаем запись успешной.
+    }
+
     return {
       ok: true,
       appointment,
     };
   }
 
+  async function cancelAppointment(id, telegramId) {
+    // Получаем запись для проверки владельца
+    const appointment = await sheetsService.getAppointmentById(id);
+
+    if (!appointment) {
+      return { ok: false, reason: "appointment_not_found" };
+    }
+
+    // Проверяем, что отменяет владелец записи
+    if (String(appointment.telegramId) !== String(telegramId)) {
+      return { ok: false, reason: "not_owner" };
+    }
+
+    // Проверяем, что запись ещё активна
+    if (appointment.status !== STATUSES.ACTIVE) {
+      return { ok: false, reason: "already_cancelled" };
+    }
+
+    const cancelledAtUtc = dayjs().utc().toISOString();
+    const success = await sheetsService.updateAppointmentStatus(
+      id,
+      STATUSES.CANCELLED,
+      { cancelledAtUtc }
+    );
+
+    if (!success) {
+      return { ok: false, reason: "update_failed" };
+    }
+
+    return {
+      ok: true,
+      appointment: { ...appointment, status: STATUSES.CANCELLED },
+    };
+  }
+
   return {
     getAvailableSlotsForService,
     bookAppointment,
+    cancelAppointment,
     getServiceList,
     getServiceByKey,
+    STATUSES,
   };
 }
 
