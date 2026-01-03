@@ -18,7 +18,7 @@ function monthLabel(d) {
   return d.format("MMMM YYYY");
 }
 
-function createCalendarKeyboard(baseDate, timezone) {
+function createCalendarKeyboard(baseDate, timezone, allowedMonths) {
   const start = dayjs(baseDate).tz(timezone).startOf("month");
   const end = dayjs(baseDate).tz(timezone).endOf("month");
 
@@ -32,10 +32,15 @@ function createCalendarKeyboard(baseDate, timezone) {
   // Navigation row
   const prev = start.subtract(1, "month");
   const next = start.add(1, "month");
+  const prevKey = prev.format("YYYY-MM");
+  const nextKey = next.format("YYYY-MM");
+  const canPrev = !allowedMonths || allowedMonths.includes(prevKey);
+  const canNext = !allowedMonths || allowedMonths.includes(nextKey);
+
   rows.push([
-    Markup.button.callback("⬅️", `cal:${prev.format("YYYY-MM")}`),
+    Markup.button.callback("⬅️", canPrev ? `cal:${prevKey}` : "cal:noop"),
     Markup.button.callback(monthLabel(start), `cal:noop`),
-    Markup.button.callback("➡️", `cal:${next.format("YYYY-MM")}`),
+    Markup.button.callback("➡️", canNext ? `cal:${nextKey}` : "cal:noop"),
   ]);
 
   // Weekday header
@@ -51,8 +56,15 @@ function createCalendarKeyboard(baseDate, timezone) {
     const weekRow = [];
     for (let d = 0; d < 7; d += 1) {
       const isCurrentMonth = day.month() === start.month();
-      const label = isCurrentMonth ? `${day.date()}` : " ";
-      const callback = isCurrentMonth
+      const monthKey = monthKeyFromDate(day);
+      const monthAllowed = !allowedMonths || allowedMonths.includes(monthKey);
+      const today = dayjs().tz(timezone).startOf("day");
+      const isPast = day.isBefore(today, "day");
+
+      // Не показываем прошедшие дни и дни из неразрешённых месяцев
+      const showDate = isCurrentMonth && monthAllowed && !isPast;
+      const label = showDate ? `${day.date()}` : " ";
+      const callback = showDate
         ? `date:${day.format("YYYY-MM-DD")}`
         : "cal:noop";
       weekRow.push(Markup.button.callback(label, callback));
@@ -65,6 +77,22 @@ function createCalendarKeyboard(baseDate, timezone) {
   rows.push([Markup.button.callback("Назад ⬅️", "back_to_services")]);
 
   return Markup.inlineKeyboard(rows);
+}
+
+// Вернёт список ключей месяцев (формат YYYY-MM), в которых разрешена запись.
+// Правило: запись только в текущем месяце; начиная с 15-го числа — также открывается следующий месяц.
+function getAllowedMonthKeys(timezone) {
+  const now = dayjs().tz(timezone);
+  const current = now.startOf("month");
+  const keys = [current.format("YYYY-MM")];
+  if (now.date() >= 15) {
+    keys.push(current.add(1, "month").format("YYYY-MM"));
+  }
+  return keys;
+}
+
+function monthKeyFromDate(d) {
+  return dayjs(d).format("YYYY-MM");
 }
 
 function createBookingScene({ bookingService, sheetsService, config }) {
@@ -118,8 +146,9 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
       const timezone = await sheetsService.getTimezone();
       const now = dayjs().tz(timezone);
+      const allowed = getAllowedMonthKeys(timezone);
 
-      const calendar = createCalendarKeyboard(now, timezone);
+      const calendar = createCalendarKeyboard(now, timezone, allowed);
 
       await ctx.reply("Выбери дату:", calendar);
 
@@ -149,8 +178,15 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
         // payload expected as YYYY-MM
         const timezone = await sheetsService.getTimezone();
+        const allowed = getAllowedMonthKeys(timezone);
+
+        if (!allowed.includes(payload)) {
+          await ctx.answerCbQuery("Запись на этот месяц недоступна.");
+          return;
+        }
+
         const base = dayjs.tz(`${payload}-01`, timezone);
-        const calendar = createCalendarKeyboard(base, timezone);
+        const calendar = createCalendarKeyboard(base, timezone, allowed);
 
         try {
           await ctx.editMessageReplyMarkup(calendar.reply_markup);
@@ -169,6 +205,19 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       }
 
       const dateStr = data.slice("date:".length);
+      // Проверяем, что выбранный месяц разрешён
+      const timezone = await sheetsService.getTimezone();
+      const allowed = getAllowedMonthKeys(timezone);
+      const monthKey = monthKeyFromDate(dateStr);
+      if (!allowed.includes(monthKey)) {
+        await ctx.answerCbQuery("Выбрана недоступная дата");
+        const base = dayjs.tz(dateStr, timezone);
+        const calendar = createCalendarKeyboard(base, timezone, allowed);
+        try {
+          await ctx.reply("Выбери дату:", calendar);
+        } catch (e) {}
+        return;
+      }
       ctx.wizard.state.booking.dateStr = dateStr;
 
       await ctx.answerCbQuery();
@@ -197,8 +246,9 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
         // Покажем календарь снова, чтобы пользователь мог выбрать другую дату
         const timezone = await sheetsService.getTimezone();
+        const allowed = getAllowedMonthKeys(timezone);
         const base = dayjs.tz(dateStr, timezone);
-        const calendar = createCalendarKeyboard(base, timezone);
+        const calendar = createCalendarKeyboard(base, timezone, allowed);
 
         try {
           await ctx.reply("Выбери дату:", calendar);
@@ -246,11 +296,12 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
         // Покажем календарь снова (в том месяце, который был выбран, если есть)
         const timezone = await sheetsService.getTimezone();
+        const allowed = getAllowedMonthKeys(timezone);
         const dateBase =
           (ctx.wizard.state.booking && ctx.wizard.state.booking.dateStr) ||
           dayjs().tz(timezone).format("YYYY-MM-DD");
         const base = dayjs.tz(dateBase, timezone);
-        const calendar = createCalendarKeyboard(base, timezone);
+        const calendar = createCalendarKeyboard(base, timezone, allowed);
 
         try {
           await ctx.reply("Выбери дату:", calendar);
@@ -393,6 +444,13 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       });
 
       if (!result.ok) {
+        if (result.reason === "limit_exceeded") {
+          await ctx.reply(
+            "Нельзя создать запись: превышен лимит — не более 3 записей в день от одного пользователя. Отмените ненужные записи или свяжитесь с администрацией."
+          );
+          return ctx.scene.leave();
+        }
+
         if (result.reason === "slot_taken") {
           await ctx.reply(
             "К сожалению, пока мы бронировали, это время уже заняли. Выбери другое время на эту же дату."

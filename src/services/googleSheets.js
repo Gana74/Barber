@@ -748,6 +748,37 @@ async function createSheetsService(config) {
     };
   }
 
+  async function getAllClients() {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.CLIENTS}!A2:H2000`,
+    });
+    const rows = res.data.values || [];
+
+    return rows.map((row) => {
+      const [
+        ID_клиента,
+        Первое_посещение_UTC,
+        Telegram_ID,
+        Username_Telegram,
+        Имя,
+        Телефон,
+        Последняя_запись_UTC,
+        Всего_записей,
+      ] = row;
+      return {
+        id: ID_клиента,
+        firstSeenUtc: Первое_посещение_UTC,
+        telegramId: Telegram_ID,
+        username: Username_Telegram,
+        name: Имя,
+        phone: Телефон,
+        lastAppointmentAtUtc: Последняя_запись_UTC,
+        total: Number(Всего_записей) || 0,
+      };
+    });
+  }
+
   return {
     ensureSheetsStructure,
     getSettings,
@@ -760,6 +791,7 @@ async function createSheetsService(config) {
     getAppointmentsByDate,
     getAllActiveAppointments,
     getAppointmentById,
+    getAllClients,
     getWorkHoursForDate,
     invalidateWorkHoursCache,
   };

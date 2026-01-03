@@ -5,6 +5,7 @@ const LocalSession = require("telegraf-session-local");
 const fs = require("fs");
 const path = require("path");
 const { createBookingService, getServiceList } = require("../services/booking");
+const adminService = require("../services/admin");
 const { createBookingScene } = require("./scenes/bookingScene");
 
 function createBot({ config, sheetsService }) {
@@ -28,7 +29,6 @@ function createBot({ config, sheetsService }) {
         let changed = false;
         parsed.sessions = parsed.sessions.map((s) => {
           if (s && s.data && s.data.__scenes) {
-            // Удаляем текущую сцену и курсор — вернём пользователя в обычное состояние
             const copy = Object.assign({}, s);
             const dataCopy = Object.assign({}, copy.data);
             delete dataCopy.__scenes;
@@ -69,13 +69,20 @@ function createBot({ config, sheetsService }) {
 
   bot.use(stage.middleware());
 
+  function isManager(ctx) {
+    try {
+      const mgr = String(config.managerChatId || "");
+      const fromId = String(ctx.from && ctx.from.id ? ctx.from.id : "");
+      return mgr && mgr === fromId;
+    } catch (e) {
+      return false;
+    }
+  }
+
   bot.start(async (ctx) => {
-    // Сбрасываем возможную зависшую сцену и состояние сессии при старте
     try {
       await ctx.scene.leave();
-    } catch (e) {
-      // игнорируем, если сцены не было
-    }
+    } catch (e) {}
     ctx.session = {};
 
     const name = ctx.from.first_name || "друг";
@@ -88,11 +95,15 @@ function createBot({ config, sheetsService }) {
   });
 
   bot.hears("Записаться 💇‍♂️", async (ctx) => {
-    // На всякий случай выходим из любой текущей сцены и идём в бронирование
     try {
       await ctx.scene.leave();
     } catch (e) {}
     ctx.session = ctx.session || {};
+    const banned = await adminService.isBanned(ctx.from.id);
+    if (banned) {
+      await ctx.reply("Извините, вы заблокированы и не можете записываться.");
+      return;
+    }
     await ctx.scene.enter("booking");
   });
 
@@ -125,15 +136,18 @@ function createBot({ config, sheetsService }) {
     );
   });
 
-  // Команда на прямой запуск сцены записи
   bot.command("book", async (ctx) => {
     try {
       await ctx.scene.leave();
     } catch (e) {}
+    const banned = await adminService.isBanned(ctx.from.id);
+    if (banned) {
+      await ctx.reply("Извините, вы заблокированы и не можете записываться.");
+      return;
+    }
     await ctx.scene.enter("booking");
   });
 
-  // Хелпер: список услуг по команде
   bot.command("services", async (ctx) => {
     const services = getServiceList();
     const text = services
@@ -142,7 +156,6 @@ function createBot({ config, sheetsService }) {
     await ctx.reply(`Список услуг:\n${text}`);
   });
 
-  // Команда отмены и сброса сцены
   bot.command("cancel", async (ctx) => {
     try {
       await ctx.scene.leave();
@@ -153,13 +166,11 @@ function createBot({ config, sheetsService }) {
     );
   });
 
-  // Обработка inline-кнопки «Отменить запись»
   bot.action(/cancel_app:(.+)/, async (ctx) => {
     const id = ctx.match[1];
     await ctx.answerCbQuery("Отменяем запись...");
 
     const appointment = await sheetsService.getAppointmentById(id);
-    // Используем русские статусы из bookingService
     if (!appointment || appointment.status !== bookingService.STATUSES.ACTIVE) {
       await ctx.reply(
         "Не удалось отменить запись: она не найдена или уже отменена."
@@ -167,7 +178,6 @@ function createBot({ config, sheetsService }) {
       return;
     }
 
-    // Комментарий: не даём отменять чужие записи
     if (String(appointment.telegramId) !== String(ctx.from.id)) {
       await ctx.reply("Эта запись принадлежит другому пользователю.");
       return;
@@ -177,9 +187,7 @@ function createBot({ config, sheetsService }) {
     const ok = await sheetsService.updateAppointmentStatus(
       id,
       bookingService.STATUSES.CANCELLED,
-      {
-        cancelledAtUtc,
-      }
+      { cancelledAtUtc }
     );
 
     if (!ok) {
@@ -199,6 +207,319 @@ function createBot({ config, sheetsService }) {
         `Клиент отменил запись:\nУслуга: ${appointment.service}\nДата: ${appointment.date}\nВремя: ${appointment.timeStart}–${appointment.timeEnd}\nКлиент: ${appointment.clientName}\nТелефон: ${appointment.phone}\nid=${appointment.id}`
       );
     }
+  });
+
+  // --- Admin menu (manager only) ---
+  // reply-style keyboard for admin (visual like user)
+  const adminKeyboard = Markup.keyboard([
+    ["Просмотр записей", "Статистика"],
+    ["Отменить запись (по ID)"],
+    ["Забанить пользователя", "Разбанить пользователя"],
+    ["Массовая рассылка"],
+    ["Вернуться в пользовательский режим"],
+  ]).resize();
+
+  bot.command("admin", async (ctx) => {
+    if (!isManager(ctx)) return;
+    ctx.session = ctx.session || {};
+    ctx.session.mode = "admin";
+    await ctx.reply(
+      "Включён режим администратора. Выберите действие:",
+      adminKeyboard
+    );
+  });
+
+  bot.command("user", async (ctx) => {
+    ctx.session = ctx.session || {};
+    ctx.session.mode = "user";
+    await ctx.reply(
+      "Режим пользователя. Выберите действие:",
+      Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
+        .resize()
+        .oneTime()
+    );
+  });
+
+  async function handleAdminAction(ctx, action) {
+    if (!isManager(ctx)) return;
+    if (!action) return;
+
+    if (action === "all_bookings") {
+      const all = await sheetsService.getAllActiveAppointments();
+      if (!all.length) {
+        await ctx.reply("Нет активных записей.");
+        return;
+      }
+      const lines = all
+        .slice(0, 50)
+        .map(
+          (a) =>
+            `${a.id} — ${a.service} ${a.date} ${a.timeStart}-${a.timeEnd} — ${a.clientName} (${a.phone})`
+        );
+      await ctx.reply(
+        `Активные записи (показано ${lines.length} из ${all.length}):\n` +
+          lines.join("\n")
+      );
+      return;
+    }
+
+    if (action === "stats") {
+      const all = await sheetsService.getAllActiveAppointments();
+      const clients = await sheetsService.getAllClients();
+      const upcoming = all.length;
+      const uniqueClients = new Set(
+        clients.map((c) => String(c.telegramId)).filter(Boolean)
+      ).size;
+      await ctx.reply(
+        `Статистика:\nАктивных записей: ${upcoming}\nКлиентов в базе: ${uniqueClients}`
+      );
+      return;
+    }
+
+    const inputActions = new Set([
+      "cancel_booking",
+      "ban",
+      "unban",
+      "broadcast",
+    ]);
+
+    if (inputActions.has(action)) {
+      ctx.session.adminAction = { type: action };
+      await ctx.reply(
+        action === "broadcast"
+          ? "Отправьте текст для рассылки. Для отмены напишите /admin_cancel"
+          : action === "cancel_booking"
+          ? "Отправьте ID записи, которую нужно отменить. Для отмены напишите /admin_cancel"
+          : action === "ban"
+          ? "Отправьте Telegram ID или @username пользователя для бана. Для отмены напишите /admin_cancel"
+          : "Отправьте Telegram ID пользователя для разбанивания. Для отмены напишите /admin_cancel"
+      );
+      return;
+    }
+  }
+
+  // keep callback handlers for broadcast confirm/cancel
+  bot.action(/admin:(.+)/, async (ctx) => {
+    if (!isManager(ctx)) return;
+    const action = ctx.match[1];
+    await ctx.answerCbQuery();
+    await handleAdminAction(ctx, action);
+  });
+
+  // map reply-keyboard presses to admin actions
+  bot.hears("Просмотр записей", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      await handleAdminAction(ctx, "all_bookings");
+    }
+  });
+
+  bot.hears("Статистика", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      await handleAdminAction(ctx, "stats");
+    }
+  });
+
+  bot.hears("Отменить запись (по ID)", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      await handleAdminAction(ctx, "cancel_booking");
+    }
+  });
+
+  bot.hears("Забанить пользователя", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      await handleAdminAction(ctx, "ban");
+    }
+  });
+
+  bot.hears("Разбанить пользователя", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      await handleAdminAction(ctx, "unban");
+    }
+  });
+
+  bot.hears("Массовая рассылка", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      await handleAdminAction(ctx, "broadcast");
+    }
+  });
+
+  bot.hears("Вернуться в пользовательский режим", async (ctx) => {
+    if (!isManager(ctx)) return;
+    ctx.session = ctx.session || {};
+    ctx.session.mode = "user";
+    await ctx.reply(
+      "Режим пользователя. Выберите действие:",
+      Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
+        .resize()
+        .oneTime()
+    );
+  });
+
+  bot.action("admin:broadcast_confirm", async (ctx) => {
+    if (!isManager(ctx)) return;
+    await ctx.answerCbQuery();
+    const act = ctx.session && ctx.session.adminAction;
+    if (!act || act.type !== "broadcast") {
+      await ctx.reply("Нет ожидаемой рассылки.");
+      return;
+    }
+
+    const recipients = act.recipients || [];
+    if (!recipients.length) {
+      await ctx.reply("Нет получателей для рассылки.");
+      delete ctx.session.adminAction;
+      return;
+    }
+
+    await ctx.reply(`Запускаю рассылку на ${recipients.length} клиентов...`);
+    const results = await adminService.broadcastToClients(
+      bot,
+      sheetsService,
+      act.message,
+      { recipients, throttleMs: 200, skipBanned: true }
+    );
+    const ok = results.filter((r) => r.ok).length;
+    const fail = results.length - ok;
+    await ctx.reply(`Рассылка завершена. Отправлено: ${ok}. Ошибок: ${fail}.`);
+    delete ctx.session.adminAction;
+  });
+
+  bot.action("admin:broadcast_cancel", async (ctx) => {
+    if (!isManager(ctx)) return;
+    await ctx.answerCbQuery();
+    delete ctx.session.adminAction;
+    await ctx.reply("Рассылка отменена.");
+  });
+
+  bot.command("admin_cancel", async (ctx) => {
+    if (!isManager(ctx)) return;
+    delete ctx.session.adminAction;
+    await ctx.reply("Действие админа отменено.");
+  });
+
+  bot.on("text", async (ctx, next) => {
+    if (!isManager(ctx) || !(ctx.session && ctx.session.mode === "admin"))
+      return next();
+    const action =
+      ctx.session && ctx.session.adminAction && ctx.session.adminAction.type;
+    if (!action) return next();
+
+    const text = ctx.message.text && ctx.message.text.trim();
+
+    if (action === "cancel_booking") {
+      const id = text;
+      const appointment = await sheetsService.getAppointmentById(id);
+      if (!appointment) {
+        await ctx.reply("Запись не найдена. /admin_cancel для отмены.");
+        return;
+      }
+      const cancelledAtUtc = new Date().toISOString();
+      const ok = await sheetsService.updateAppointmentStatus(
+        id,
+        bookingService.STATUSES.CANCELLED,
+        { cancelledAtUtc }
+      );
+      if (!ok) {
+        await ctx.reply("Не удалось отменить запись.");
+      } else {
+        await ctx.reply(`Запись ${id} отменена.`);
+        if (appointment.telegramId) {
+          try {
+            await ctx.telegram.sendMessage(
+              String(appointment.telegramId),
+              `Ваша запись на ${appointment.date} ${appointment.timeStart} отменена менеджером.`
+            );
+          } catch (e) {}
+        }
+      }
+      delete ctx.session.adminAction;
+      return;
+    }
+
+    if (action === "ban") {
+      let target = text;
+      let telegramId = null;
+      if (target.startsWith("@")) {
+        const clients = await sheetsService.getAllClients();
+        const found = clients.find(
+          (c) => c.username && `@${c.username}` === target
+        );
+        if (found) telegramId = found.telegramId;
+      } else {
+        telegramId = target;
+      }
+      if (!telegramId) {
+        await ctx.reply("Пользователь не найден. /admin_cancel для отмены.");
+        return;
+      }
+      await adminService.banUser(telegramId);
+      await ctx.reply(`Пользователь ${telegramId} забанен.`);
+      delete ctx.session.adminAction;
+      return;
+    }
+
+    if (action === "unban") {
+      const telegramId = text;
+      if (!telegramId) {
+        await ctx.reply("Укажите Telegram ID. /admin_cancel для отмены.");
+        return;
+      }
+      await adminService.unbanUser(telegramId);
+      await ctx.reply(`Пользователь ${telegramId} разбанен.`);
+      delete ctx.session.adminAction;
+      return;
+    }
+
+    if (action === "broadcast") {
+      const message = text;
+      if (!message) {
+        await ctx.reply("Текст пуст. /admin_cancel для отмены.");
+        return;
+      }
+
+      const clients = await sheetsService.getAllClients();
+      const bans = await adminService.getBans();
+      const recipients = clients
+        .filter((c) => c && c.telegramId)
+        .map((c) => String(c.telegramId))
+        .filter((id) => id && !bans.some((b) => String(b) === String(id)));
+
+      if (!recipients.length) {
+        await ctx.reply(
+          "Нет получателей для рассылки (нет клиентов с telegramId или все в бане)."
+        );
+        delete ctx.session.adminAction;
+        return;
+      }
+
+      ctx.session.adminAction = { type: "broadcast", message, recipients };
+
+      const sample = recipients.slice(0, 6).join(", ");
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "Подтвердить рассылку ✅",
+            "admin:broadcast_confirm"
+          ),
+        ],
+        [Markup.button.callback("Отменить ❌", "admin:broadcast_cancel")],
+      ]);
+
+      await ctx.reply(
+        `Предпросмотр рассылки:\n\nТекст:\n${message}\n\nПолучателей: ${recipients.length}\nПримеры: ${sample}\n\nПодтвердите отправку или отмените.`,
+        keyboard
+      );
+
+      return;
+    }
+
+    return next();
   });
 
   return bot;

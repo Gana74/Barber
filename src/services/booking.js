@@ -223,6 +223,34 @@ function createBookingService({ sheetsService, config }) {
       return { ok: false, reason: "slot_taken" };
     }
 
+    // Защита от спама: не более 3 активных записей в день от одного пользователя
+    try {
+      const dayAppointments = await sheetsService.getAppointmentsByDate(
+        dateStr
+      );
+
+      const ownerKey =
+        client.telegramId || client.chatId || client.phone || null;
+      if (ownerKey) {
+        const sameUserCount = dayAppointments.filter((a) => {
+          if (a.status !== STATUSES.ACTIVE) return false;
+          if (client.telegramId && a.telegramId)
+            return String(a.telegramId) === String(client.telegramId);
+          if (client.chatId && a.chatId)
+            return String(a.chatId) === String(client.chatId);
+          if (client.phone && a.phone)
+            return String(a.phone) === String(client.phone);
+          return false;
+        }).length;
+
+        if (sameUserCount >= 3) {
+          return { ok: false, reason: "limit_exceeded" };
+        }
+      }
+    } catch (e) {
+      // Если проверка не удалась, не блокируем создание записи — логируем молча
+    }
+
     const start = dayjs.tz(`${dateStr}T${timeStr}:00`, timezone);
     const end = start.add(service.durationMin, "minute");
 
