@@ -99,6 +99,22 @@ function buildSlotsForDay({
     }
   });
 
+  // учитываем обед, если задан в рабочих часах
+  try {
+    if (workday && workday.lunchStart && workday.lunchEnd) {
+      const lunchStart = dayjs.tz(
+        `${dateStr}T${workday.lunchStart}:00`,
+        timezone
+      );
+      const lunchEnd = dayjs.tz(`${dateStr}T${workday.lunchEnd}:00`, timezone);
+      if (lunchStart.isBefore(lunchEnd)) {
+        busyIntervals.push({ start: lunchStart, end: lunchEnd });
+      }
+    }
+  } catch (e) {
+    // ignore malformed lunch times
+  }
+
   const slots = [];
   const now = dayjs().tz(timezone);
 
@@ -137,7 +153,7 @@ function buildSlotsForDay({
   return slots;
 }
 
-function createBookingService({ sheetsService, config }) {
+function createBookingService({ sheetsService, config, calendarService }) {
   async function getAvailableSlotsForService(serviceKey, dateStr) {
     const service = getServiceByKey(serviceKey);
     if (!service) {
@@ -286,6 +302,25 @@ function createBookingService({ sheetsService, config }) {
       lastAppointmentAtUtc: createdAtUtc,
     });
 
+    // Попытка создать событие в Google Calendar (опционально)
+    try {
+      if (calendarService && calendarService.createEventForAppointment) {
+        // не ждём успешного результата, но логируем ID если вернулся
+        const eventId = await calendarService.createEventForAppointment(
+          appointment,
+          timezone
+        );
+        if (eventId) {
+          // логируем успешную синхронизацию
+          console.log(
+            `Google Calendar event created: ${eventId} for appointment ${appointment.id}`
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("Calendar sync failed for appointment:", e.message || e);
+    }
+
     // Дополнительная проверка на гонку: читаем активные записи на этот день
     // и если есть пересечение более чем одной записи на тот же интервал,
     // отменяем позднюю (те, что созданы позже). Это делает операцию
@@ -360,6 +395,14 @@ function createBookingService({ sheetsService, config }) {
       return { ok: false, reason: "update_failed" };
     }
 
+    // Удаляем/обновляем событие в календаре при наличии сервиса
+    try {
+      if (calendarService && calendarService.deleteEventForAppointmentId) {
+        await calendarService.deleteEventForAppointmentId(id);
+      }
+    } catch (e) {
+      console.warn("Calendar delete failed for appointment:", e.message || e);
+    }
     return {
       ok: true,
       appointment: { ...appointment, status: STATUSES.CANCELLED },

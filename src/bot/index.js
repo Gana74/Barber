@@ -7,8 +7,9 @@ const path = require("path");
 const { createBookingService, getServiceList } = require("../services/booking");
 const adminService = require("../services/admin");
 const { createBookingScene } = require("./scenes/bookingScene");
+const { formatDate } = require("../utils/formatDate");
 
-function createBot({ config, sheetsService }) {
+function createBot({ config, sheetsService, calendarService }) {
   const bot = new Telegraf(config.botToken);
 
   // Предотвращаем застревание пользователей в сценах при рестарте бота.
@@ -61,7 +62,11 @@ function createBot({ config, sheetsService }) {
 
   bot.use(localSession.middleware());
 
-  const bookingService = createBookingService({ sheetsService, config });
+  const bookingService = createBookingService({
+    sheetsService,
+    config,
+    calendarService,
+  });
 
   const stage = new Scenes.Stage([
     createBookingScene({ bookingService, sheetsService, config }),
@@ -120,12 +125,13 @@ function createBot({ config, sheetsService }) {
     }
 
     const lines = list.map(
-      (app, idx) => `${idx + 1}. ${app.service} — ${app.date} ${app.timeStart}`
+      (app, idx) =>
+        `${idx + 1}. ${app.service} — ${formatDate(app.date)} ${app.timeStart}`
     );
 
     const keyboard = list.map((app) => [
       Markup.button.callback(
-        `Отменить ${app.date} ${app.timeStart}`,
+        `Отменить ${formatDate(app.date)} ${app.timeStart}`,
         `cancel_app:${app.id}`
       ),
     ]);
@@ -198,13 +204,33 @@ function createBot({ config, sheetsService }) {
     }
 
     await ctx.reply(
-      `Запись на ${appointment.date} ${appointment.timeStart} отменена. Спасибо, что предупредил(а)!`
+      `Запись на ${formatDate(appointment.date)} ${
+        appointment.timeStart
+      } отменена. Спасибо, что предупредил(а)!`
     );
+
+    // Попытка удалить событие в календаре
+    try {
+      if (calendarService && calendarService.deleteEventForAppointmentId) {
+        await calendarService.deleteEventForAppointmentId(id);
+      }
+    } catch (e) {
+      console.warn(
+        "Calendar delete failed for appointment (user cancel):",
+        e.message || e
+      );
+    }
 
     if (config.managerChatId) {
       await ctx.telegram.sendMessage(
         config.managerChatId,
-        `Клиент отменил запись:\nУслуга: ${appointment.service}\nДата: ${appointment.date}\nВремя: ${appointment.timeStart}–${appointment.timeEnd}\nКлиент: ${appointment.clientName}\nТелефон: ${appointment.phone}\nid=${appointment.id}`
+        `Клиент отменил запись:\nУслуга: ${
+          appointment.service
+        }\nДата: ${formatDate(appointment.date)}\nВремя: ${
+          appointment.timeStart
+        }–${appointment.timeEnd}\nКлиент: ${appointment.clientName}\nТелефон: ${
+          appointment.phone
+        }\nid=${appointment.id}`
       );
     }
   });
@@ -254,7 +280,9 @@ function createBot({ config, sheetsService }) {
         .slice(0, 50)
         .map(
           (a) =>
-            `${a.id} — ${a.service} ${a.date} ${a.timeStart}-${a.timeEnd} — ${a.clientName} (${a.phone})`
+            `${a.id} — ${a.service} ${formatDate(a.date)} ${a.timeStart}-${
+              a.timeEnd
+            } — ${a.clientName} (${a.phone})`
         );
       await ctx.reply(
         `Активные записи (показано ${lines.length} из ${all.length}):\n` +
@@ -299,11 +327,12 @@ function createBot({ config, sheetsService }) {
   }
 
   // keep callback handlers for broadcast confirm/cancel
-  bot.action(/admin:(.+)/, async (ctx) => {
-    if (!isManager(ctx)) return;
+  bot.action(/admin:(.+)/, async (ctx, next) => {
+    if (!isManager(ctx)) return next();
     const action = ctx.match[1];
     await ctx.answerCbQuery();
     await handleAdminAction(ctx, action);
+    return next();
   });
 
   // map reply-keyboard presses to admin actions
@@ -429,11 +458,23 @@ function createBot({ config, sheetsService }) {
         await ctx.reply("Не удалось отменить запись.");
       } else {
         await ctx.reply(`Запись ${id} отменена.`);
+        try {
+          if (calendarService && calendarService.deleteEventForAppointmentId) {
+            await calendarService.deleteEventForAppointmentId(id);
+          }
+        } catch (e) {
+          console.warn(
+            "Calendar delete failed for appointment (admin cancel):",
+            e.message || e
+          );
+        }
         if (appointment.telegramId) {
           try {
             await ctx.telegram.sendMessage(
               String(appointment.telegramId),
-              `Ваша запись на ${appointment.date} ${appointment.timeStart} отменена менеджером.`
+              `Ваша запись на ${formatDate(appointment.date)} ${
+                appointment.timeStart
+              } отменена менеджером.`
             );
           } catch (e) {}
         }

@@ -5,6 +5,7 @@ const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const timezonePlugin = require("dayjs/plugin/timezone");
 const { createBookingService } = require("./booking");
+const { formatDate } = require("../utils/formatDate");
 
 dayjs.extend(utc);
 dayjs.extend(timezonePlugin);
@@ -25,27 +26,34 @@ function setupReminderCleanup() {
   );
 }
 
-function setupReminders({ bot, config, sheetsService, bookingService }) {
+function setupReminders({
+  bot,
+  config,
+  sheetsService,
+  bookingService,
+  calendarService,
+}) {
   // Комментарий: читаем таймзону салона из таблицы (асинхронно внутри cron)
 
   // Создаем bookingService если не передан (для доступа к STATUSES)
   const booking =
-    bookingService || createBookingService({ sheetsService, config });
+    bookingService ||
+    createBookingService({ sheetsService, config, calendarService });
 
   // Инициализируем очистку кэша напоминаний
   setupReminderCleanup();
 
-  // Ежедневные напоминания о завтрашних записях (в 10:00 по времени салона)
+  // Напоминания в день записи (в 07:50 по времени салона)
   cron.schedule(
-    "0 10 * * *",
+    "50 7 * * *",
     async () => {
       try {
         const timezone = await sheetsService.getTimezone();
         const nowTz = dayjs().tz(timezone);
-        const tomorrow = nowTz.add(1, "day").format("YYYY-MM-DD");
+        const currentDate = nowTz.format("YYYY-MM-DD");
 
         const appointments = await sheetsService.getAppointmentsByDate(
-          tomorrow
+          currentDate
         );
 
         // Фильтруем только активные записи
@@ -66,9 +74,9 @@ function setupReminders({ bot, config, sheetsService, bookingService }) {
           }
 
           const msg = [
-            "💈 *Напоминание о записи в барбершоп*",
+            "💈 *Напоминание о сегодняшней записи в барбершоп*",
             "",
-            `📅 *Дата:* ${app.date}`,
+            `📅 *Дата:* ${formatDate(app.date)}`,
             `⏰ *Время:* ${app.timeStart}–${app.timeEnd}`,
             `✂️ *Услуга:* ${app.service}`,
             "",
@@ -103,14 +111,14 @@ function setupReminders({ bot, config, sheetsService, bookingService }) {
         console.log(
           `[${dayjs().format(
             "YYYY-MM-DD HH:mm:ss"
-          )}] Ежедневные напоминания отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`
+          )}] Напоминания в день записи отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`
         );
 
         // Отправляем отчет менеджеру если настроен
         if (config.managerChatId && (sentCount > 0 || errorCount > 0)) {
           const reportMsg = [
-            "📊 *Отчет по ежедневным напоминаниям*",
-            `📅 Дата: ${tomorrow}`,
+            "📊 *Отчет по напоминаниям в день записи*",
+            `📅 Дата: ${formatDate(currentDate)}`,
             `✅ Отправлено: ${sentCount}`,
             `❌ Ошибок: ${errorCount}`,
             `⏰ Время отправки: ${dayjs().tz(timezone).format("HH:mm:ss")}`,
@@ -125,7 +133,7 @@ function setupReminders({ bot, config, sheetsService, bookingService }) {
           }
         }
       } catch (err) {
-        console.error("Критическая ошибка в ежедневных напоминаниях:", err);
+        console.error("Критическая ошибка в напоминаниях в день записи:", err);
       }
     },
     {
@@ -185,7 +193,7 @@ function setupReminders({ bot, config, sheetsService, bookingService }) {
               "⏰ *Скоро ваша запись в барбершоп!*",
               "",
               `⏳ *До начала осталось:* ${timeUntil} часа`,
-              `📅 *Дата:* ${app.date}`,
+              `📅 *Дата:* ${formatDate(app.date)}`,
               `🕐 *Время:* ${app.timeStart}–${app.timeEnd}`,
               `✂️ *Услуга:* ${app.service}`,
               "",
@@ -339,7 +347,7 @@ function setupReminders({ bot, config, sheetsService, bookingService }) {
         if (config.managerChatId && completedCount > 0) {
           const reportMsg = [
             "✅ *Отчет по автоматическому завершению записей*",
-            `📅 Дата: ${nowTz.format("YYYY-MM-DD")}`,
+            `📅 Дата: ${formatDate(nowTz.format("YYYY-MM-DD"))}`,
             `⏰ Время: ${nowTz.format("HH:mm:ss")}`,
             `✅ Завершено записей: ${completedCount}`,
             errorCount > 0 ? `❌ Ошибок: ${errorCount}` : "",

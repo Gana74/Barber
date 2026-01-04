@@ -4,6 +4,7 @@
 const { initConfig } = require("./src/config");
 const { createBot } = require("./src/bot");
 const { createSheetsService } = require("./src/services/googleSheets");
+const { createCalendarService } = require("./src/services/googleCalendar");
 const { setupReminders } = require("./src/services/reminders");
 
 async function main() {
@@ -16,14 +17,25 @@ async function main() {
   // Инициализация Google Sheets API
   const sheetsService = await createSheetsService(config);
 
+  // Инициализация Google Calendar (опционально, если указан calendarId)
+  let calendarService = null;
+  if (config.google && config.google.calendarId) {
+    try {
+      calendarService = await createCalendarService(config);
+    } catch (e) {
+      console.warn("Не удалось инициализировать Google Calendar:", e.message);
+      calendarService = null;
+    }
+  }
+
   // Автосоздание листов/заголовков/таймзоны, если их нет
   await sheetsService.ensureSheetsStructure();
 
   // Инициализация и запуск бота
-  const bot = createBot({ config, sheetsService });
+  const bot = createBot({ config, sheetsService, calendarService });
 
   // Настройка cron-напоминаний
-  setupReminders({ bot, config, sheetsService });
+  setupReminders({ bot, config, sheetsService, calendarService });
 
   console.log("Launching Telegram bot...");
   // Запуск long polling

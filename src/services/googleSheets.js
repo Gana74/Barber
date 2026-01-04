@@ -60,6 +60,8 @@ const HEADERS = {
     "День_недели",
     "Время_начала",
     "Время_окончания",
+    "Обед_начало",
+    "Обед_окончание",
   ],
 };
 
@@ -88,7 +90,7 @@ async function createSheetsService(config) {
   async function fetchWorkHours() {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.WORKHOURS}!A2:D1000`,
+      range: `${SHEET_NAMES.WORKHOURS}!A2:F1000`,
     });
 
     const rows = res.data.values || [];
@@ -135,18 +137,27 @@ async function createSheetsService(config) {
     };
 
     rows.forEach((row) => {
-      const [dateCell, weekdayCell, timeStartCell, timeEndCell] = row;
+      const [
+        dateCell,
+        weekdayCell,
+        timeStartCell,
+        timeEndCell,
+        lunchStartCell,
+        lunchEndCell,
+      ] = row;
       const start = (timeStartCell || "").trim();
       const end = (timeEndCell || "").trim();
+      const lunchStart = (lunchStartCell || "").trim();
+      const lunchEnd = (lunchEndCell || "").trim();
 
       if (dateCell) {
-        byDate[String(dateCell).trim()] = { start, end };
+        byDate[String(dateCell).trim()] = { start, end, lunchStart, lunchEnd };
       } else if (weekdayCell) {
         const raw = String(weekdayCell).trim().toLowerCase();
         let key = null;
         if (WEEKDAY_ALIAS[raw]) key = WEEKDAY_ALIAS[raw];
         else if (raw.length >= 3) key = raw.slice(0, 3);
-        if (key) byWeekday[key] = { start, end };
+        if (key) byWeekday[key] = { start, end, lunchStart, lunchEnd };
       }
     });
 
@@ -330,6 +341,7 @@ async function createSheetsService(config) {
           Код_отмены,
           Telegram_ID,
           Chat_ID,
+          Исполнено_UTC,
           Отменено_UTC,
         ] = row;
         return {
@@ -347,6 +359,7 @@ async function createSheetsService(config) {
           cancelCode: Код_отмены,
           telegramId: Telegram_ID,
           chatId: Chat_ID,
+          completedAtUtc: Исполнено_UTC,
           cancelledAtUtc: Отменено_UTC,
         };
       })
@@ -413,8 +426,8 @@ async function createSheetsService(config) {
             cancelCode,
             String(telegramId || ""),
             String(chatId || ""),
-            "", // Отменено_UTC
             "", // Исполнено_UTC - пусто при создании
+            "", // Отменено_UTC
           ],
         ],
       },
@@ -452,13 +465,13 @@ async function createSheetsService(config) {
     const rowNumber = targetRowIndex + 2; // сдвиг из-за заголовков
 
     const rowValues = rows[targetRowIndex];
-    // Статус в колонке K (index 10), Отменено_UTC в колонке P (index 15)
+    // Статус в колонке K (index 10), Исполнено_UTC в колонке O (index 14), Отменено_UTC в колонке P (index 15)
     rowValues[10] = status;
     if (status === "отменена" && cancelledAtUtc) {
       rowValues[15] = cancelledAtUtc;
     }
     if (status === "исполнено" && completedAtUtc) {
-      rowValues[16] = completedAtUtc; // Исполнено_UTC
+      rowValues[14] = completedAtUtc; // Исполнено_UTC
     }
 
     await sheets.spreadsheets.values.update({
@@ -671,8 +684,8 @@ async function createSheetsService(config) {
           Код_отмены,
           Telegram_ID,
           Chat_ID,
-          Отменено_UTC,
           Исполнено_UTC,
+          Отменено_UTC,
         ] = row;
         return {
           id: ID_записи,
@@ -689,8 +702,8 @@ async function createSheetsService(config) {
           cancelCode: Код_отмены,
           telegramId: Telegram_ID,
           chatId: Chat_ID,
-          cancelledAtUtc: Отменено_UTC,
           completedAtUtc: Исполнено_UTC,
+          cancelledAtUtc: Отменено_UTC,
         };
       })
       .filter(
@@ -724,8 +737,8 @@ async function createSheetsService(config) {
       Код_отмены,
       Telegram_ID,
       Chat_ID,
-      Отменено_UTC,
       Исполнено_UTC,
+      Отменено_UTC,
     ] = row;
 
     return {
@@ -743,8 +756,8 @@ async function createSheetsService(config) {
       cancelCode: Код_отмены,
       telegramId: Telegram_ID,
       chatId: Chat_ID,
-      cancelledAtUtc: Отменено_UTC,
       completedAtUtc: Исполнено_UTC,
+      cancelledAtUtc: Отменено_UTC,
     };
   }
 

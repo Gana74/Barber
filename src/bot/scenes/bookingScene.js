@@ -5,6 +5,7 @@ const dayjs = require("dayjs");
 const timezonePlugin = require("dayjs/plugin/timezone");
 
 dayjs.extend(timezonePlugin);
+const { formatDate } = require("../../utils/formatDate");
 
 function formatDateLabel(d) {
   return d.format("DD.MM (dd)");
@@ -375,7 +376,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         const summary = [
           "Проверь, всё ли верно:",
           `Услуга: ${service.name}`,
-          `Дата: ${dateStr}`,
+          `Дата: ${formatDate(dateStr)}`,
           `Время: ${timeStr}`,
           `Имя: ${name}`,
           `Телефон: ${phone}`,
@@ -513,7 +514,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       const confirmation = [
         "Готово! Ты записан(а) в барбершоп 👌",
         `Услуга: ${appointment.service}`,
-        `Дата: ${appointment.date}`,
+        `Дата: ${formatDate(appointment.date)}`,
         `Время: ${appointment.timeStart}–${appointment.timeEnd}`,
         "",
         "Если планы изменятся — можно отменить запись по кнопке ниже.",
@@ -536,7 +537,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         const managerMsg = [
           "Новая запись:",
           `Услуга: ${appointment.service}`,
-          `Дата: ${appointment.date}`,
+          `Дата: ${formatDate(appointment.date)}`,
           `Время: ${appointment.timeStart}–${appointment.timeEnd}`,
           `Клиент: ${appointment.clientName}`,
           `Телефон: ${appointment.phone}`,
