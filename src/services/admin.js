@@ -23,19 +23,35 @@ async function isBanned(telegramId) {
   return bans.some((b) => String(b) === String(telegramId));
 }
 
-async function banUser(telegramId) {
+async function banUser(telegramId, reason = "", sheetsService = null) {
   const bans = await readBans();
   if (!bans.some((b) => String(b) === String(telegramId))) {
     bans.push(String(telegramId));
     await writeBans(bans);
   }
+  // Синхронизируем с таблицей, если сервис передан
+  try {
+    if (sheetsService && sheetsService.setUserBanStatus) {
+      await sheetsService.setUserBanStatus(telegramId, true, reason || "");
+    }
+  } catch (e) {
+    // не прерываем, если не удалось записать в таблицу
+  }
   return true;
 }
 
-async function unbanUser(telegramId) {
+async function unbanUser(telegramId, sheetsService = null) {
   let bans = await readBans();
   bans = bans.filter((b) => String(b) !== String(telegramId));
   await writeBans(bans);
+  // Синхронизируем с таблицей, если сервис передан
+  try {
+    if (sheetsService && sheetsService.setUserBanStatus) {
+      await sheetsService.setUserBanStatus(telegramId, false, "");
+    }
+  } catch (e) {
+    // не прерываем, если не удалось записать в таблицу
+  }
   return true;
 }
 
@@ -46,8 +62,8 @@ async function getBans() {
 async function broadcastToClients(
   bot,
   sheetsService,
-  message,
-  throttleMs = 200
+  payload,
+  options = 200
 ) {
   // Поддерживаем два режима: передан список получателей или отправка всем клиентам
   // Если передан опциональный параметр `options.recipients` - используем его (массив telegramId строк).
@@ -55,12 +71,14 @@ async function broadcastToClients(
   const clientsAll = await sheetsService.getAllClients();
   const results = [];
 
-  // Normalize options if called in old style
+  // Normalize options for backward compatibility (old style: throttleMs number or object)
   let recipients = null;
-  let optsThrottle = throttleMs;
+  let optsThrottle = 200;
   let skipBanned = true;
-  if (typeof throttleMs === "object" && throttleMs !== null) {
-    const o = throttleMs;
+  if (typeof options === "number") {
+    optsThrottle = options;
+  } else if (typeof options === "object" && options !== null) {
+    const o = options;
     recipients = Array.isArray(o.recipients) ? o.recipients.map(String) : null;
     optsThrottle = typeof o.throttleMs === "number" ? o.throttleMs : 200;
     skipBanned = o.skipBanned !== false;
@@ -81,9 +99,31 @@ async function broadcastToClients(
   for (const c of targets) {
     const tid = String(c.telegramId || "");
     if (!tid) continue;
-    if (skipBanned && bans.some((b) => String(b) === tid)) continue;
+
+    // Пропускаем забаненных пользователей
+    if (skipBanned) {
+      if (bans.some((b) => String(b) === tid)) {
+        continue;
+      }
+      if (sheetsService && sheetsService.getUserBanStatus) {
+        try {
+          const st = await sheetsService.getUserBanStatus(tid);
+          if (st && st.banned) continue;
+        } catch (e) {
+          // игнорируем ошибки таблицы
+        }
+      }
+    }
+
     try {
-      await bot.telegram.sendMessage(tid, message);
+      if (payload && typeof payload === "object" && payload.kind === "photo") {
+        await bot.telegram.sendPhoto(tid, payload.fileId, {
+          caption: payload.caption || undefined,
+        });
+      } else {
+        const text = typeof payload === "string" ? payload : (payload && payload.text) || "";
+        await bot.telegram.sendMessage(tid, text);
+      }
       results.push({ id: tid, ok: true });
     } catch (e) {
       results.push({ id: tid, ok: false, error: e.message });

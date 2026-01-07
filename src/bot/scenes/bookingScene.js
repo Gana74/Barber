@@ -101,6 +101,23 @@ function createBookingScene({ bookingService, sheetsService, config }) {
     "booking",
     // Шаг 1: выбор услуги
     async (ctx) => {
+      // Ранняя проверка бана пользователя
+      try {
+        if (ctx.from && ctx.from.id && sheetsService && sheetsService.getUserBanStatus) {
+          const st = await sheetsService.getUserBanStatus(ctx.from.id);
+          if (st && st.banned) {
+            await ctx.reply(
+              "Ваш аккаунт заблокирован для записи. Свяжитесь с администратором.",
+              Markup.removeKeyboard()
+            );
+            try { await ctx.scene.leave(); } catch (e) {}
+            return;
+          }
+        }
+      } catch (e) {
+        // игнорируем ошибки проверки
+      }
+
       const services = bookingService.getServiceList();
       const buttons = services.map((s) => [s.name]);
 
@@ -490,10 +507,13 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           });
           if (row.length) keyboard.push(row);
 
+          // Добавляем кнопку "Назад" для возврата к выбору даты
+          keyboard.push([Markup.button.callback("Назад ⬅️", "back_to_dates")]);
+
           await ctx.reply("Выбери время:", Markup.inlineKeyboard(keyboard));
 
-          // Возвращаемся к шагу выбора времени (шаг 3, так как индексация с 0)
-          return ctx.wizard.selectStep(2);
+          // Возвращаемся к шагу выбора времени (шаг 4, индексация с 0)
+          return ctx.wizard.selectStep(3);
         } else {
           if (result.reason === "closed") {
             await ctx.reply(

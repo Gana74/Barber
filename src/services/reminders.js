@@ -43,17 +43,17 @@ function setupReminders({
   // Инициализируем очистку кэша напоминаний
   setupReminderCleanup();
 
-  // Напоминания в день записи (в 07:50 по времени салона)
+  // Напоминания за день записи (в 10:00 по времени салона)
   cron.schedule(
-    "50 7 * * *",
+    "0 10 * * *",
     async () => {
       try {
         const timezone = await sheetsService.getTimezone();
         const nowTz = dayjs().tz(timezone);
-        const currentDate = nowTz.format("YYYY-MM-DD");
+        const tomorrow = nowTz.add(1, "day").format("YYYY-MM-DD");
 
         const appointments = await sheetsService.getAppointmentsByDate(
-          currentDate
+          tomorrow
         );
 
         // Фильтруем только активные записи
@@ -74,9 +74,9 @@ function setupReminders({
           }
 
           const msg = [
-            "💈 *Напоминание о сегодняшней записи в барбершоп*",
+            "💈 *Напоминание о записи в барбершоп*",
             "",
-            `📅 *Дата:* ${formatDate(app.date)}`,
+            `📅 *Дата:* ${app.date}`,
             `⏰ *Время:* ${app.timeStart}–${app.timeEnd}`,
             `✂️ *Услуга:* ${app.service}`,
             "",
@@ -89,7 +89,6 @@ function setupReminders({
             config.barberPhone || "+7 XXX XXX-XX-XX",
             config.barberAddress || "Адрес уточняйте у администратора",
           ].join("\n");
-
           try {
             await bot.telegram.sendMessage(app.telegramId, msg, {
               parse_mode: "Markdown",
@@ -111,14 +110,14 @@ function setupReminders({
         console.log(
           `[${dayjs().format(
             "YYYY-MM-DD HH:mm:ss"
-          )}] Напоминания в день записи отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`
+          )}] Напоминания за день записи отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`
         );
 
         // Отправляем отчет менеджеру если настроен
         if (config.managerChatId && (sentCount > 0 || errorCount > 0)) {
           const reportMsg = [
-            "📊 *Отчет по напоминаниям в день записи*",
-            `📅 Дата: ${formatDate(currentDate)}`,
+            "📊 *Отчет по напоминаниям за день записи*",
+            `📅 Дата: ${tomorrow}`,
             `✅ Отправлено: ${sentCount}`,
             `❌ Ошибок: ${errorCount}`,
             `⏰ Время отправки: ${dayjs().tz(timezone).format("HH:mm:ss")}`,
@@ -133,7 +132,7 @@ function setupReminders({
           }
         }
       } catch (err) {
-        console.error("Критическая ошибка в напоминаниях в день записи:", err);
+        console.error("Критическая ошибка в напоминаниях за день записи:", err);
       }
     },
     {

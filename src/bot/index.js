@@ -315,7 +315,7 @@ function createBot({ config, sheetsService, calendarService }) {
       ctx.session.adminAction = { type: action };
       await ctx.reply(
         action === "broadcast"
-          ? "Отправьте текст для рассылки. Для отмены напишите /admin_cancel"
+          ? "Отправьте текст для рассылки или пришлите фото с подписью. Для отмены напишите /admin_cancel"
           : action === "cancel_booking"
           ? "Отправьте ID записи, которую нужно отменить. Для отмены напишите /admin_cancel"
           : action === "ban"
@@ -410,7 +410,7 @@ function createBot({ config, sheetsService, calendarService }) {
     const results = await adminService.broadcastToClients(
       bot,
       sheetsService,
-      act.message,
+      act.payload || act.message,
       { recipients, throttleMs: 200, skipBanned: true }
     );
     const ok = results.filter((r) => r.ok).length;
@@ -499,7 +499,7 @@ function createBot({ config, sheetsService, calendarService }) {
         await ctx.reply("Пользователь не найден. /admin_cancel для отмены.");
         return;
       }
-      await adminService.banUser(telegramId);
+      await adminService.banUser(telegramId, "", sheetsService);
       await ctx.reply(`Пользователь ${telegramId} забанен.`);
       delete ctx.session.adminAction;
       return;
@@ -511,7 +511,7 @@ function createBot({ config, sheetsService, calendarService }) {
         await ctx.reply("Укажите Telegram ID. /admin_cancel для отмены.");
         return;
       }
-      await adminService.unbanUser(telegramId);
+      await adminService.unbanUser(telegramId, sheetsService);
       await ctx.reply(`Пользователь ${telegramId} разбанен.`);
       delete ctx.session.adminAction;
       return;
@@ -539,7 +539,7 @@ function createBot({ config, sheetsService, calendarService }) {
         return;
       }
 
-      ctx.session.adminAction = { type: "broadcast", message, recipients };
+      ctx.session.adminAction = { type: "broadcast", payload: { kind: "text", text: message }, recipients };
 
       const sample = recipients.slice(0, 6).join(", ");
       const keyboard = Markup.inlineKeyboard([
@@ -561,6 +561,48 @@ function createBot({ config, sheetsService, calendarService }) {
     }
 
     return next();
+  });
+
+  // Приём фото от админа для массовой рассылки
+  bot.on("photo", async (ctx, next) => {
+    if (!isManager(ctx) || !(ctx.session && ctx.session.mode === "admin")) return next();
+    const action = ctx.session && ctx.session.adminAction && ctx.session.adminAction.type;
+    if (action !== "broadcast") return next();
+
+    const photos = ctx.message.photo || [];
+    if (!photos.length) return next();
+    // Выбираем наибольшее доступное превью (последний элемент массива)
+    const best = photos[photos.length - 1];
+    const fileId = best.file_id;
+    const caption = (ctx.message.caption || "").trim();
+
+    const clients = await sheetsService.getAllClients();
+    const bans = await adminService.getBans();
+    const recipients = clients
+      .filter((c) => c && c.telegramId)
+      .map((c) => String(c.telegramId))
+      .filter((id) => id && !bans.some((b) => String(b) === String(id)));
+
+    if (!recipients.length) {
+      await ctx.reply("Нет получателей для рассылки (нет клиентов с telegramId или все в бане).");
+      delete ctx.session.adminAction;
+      return;
+    }
+
+    ctx.session.adminAction = { type: "broadcast", payload: { kind: "photo", fileId, caption }, recipients };
+
+    const sample = recipients.slice(0, 6).join(", ");
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback("Подтвердить рассылку ✅", "admin:broadcast_confirm")],
+      [Markup.button.callback("Отменить ❌", "admin:broadcast_cancel")],
+    ]);
+
+    await ctx.reply("Предпросмотр фото-письма. Подпись:" + (caption ? `\n${caption}` : " (без подписи)"));
+    await ctx.replyWithPhoto(fileId);
+    await ctx.reply(
+      `Получателей: ${recipients.length}\nПримеры: ${sample}\n\nПодтвердите отправку или отмените.`,
+      keyboard
+    );
   });
 
   return bot;

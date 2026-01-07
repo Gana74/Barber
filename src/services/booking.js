@@ -222,6 +222,18 @@ function createBookingService({ sheetsService, config, calendarService }) {
       throw new Error(`Unknown service key: ${serviceKey}`);
     }
 
+    // Блокируем создание записи для забаненных пользователей
+    try {
+      if (client && client.telegramId && sheetsService && sheetsService.getUserBanStatus) {
+        const st = await sheetsService.getUserBanStatus(client.telegramId);
+        if (st && st.banned) {
+          return { ok: false, reason: "banned" };
+        }
+      }
+    } catch (e) {
+      // не блокируем при ошибке проверки
+    }
+
     const timezone = await sheetsService.getTimezone();
     // Проверяем рабочие часы дня
     const workHours =

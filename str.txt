@@ -1,0 +1,30 @@
+d:/Документы/Обучение/Frontend/прочее/barber/
+├─] .env (ignored)
+├── .gitignore
+├── .qodo/
+│   ├── agents/
+│   └── workflows/
+├─] credentials.json (ignored)
+├── index.js
+├── KODA.md
+├── MANAGER.md
+├─] node_modules/ (ignored)
+├── package-lock.json
+├── package.json
+├── README.md
+├─] sessions.json (ignored)
+└── src/
+    ├── bot/
+    │   ├── index.js
+    │   └── scenes/
+    │       └── bookingScene.js
+    ├── config/
+    │   └── index.js
+    ├── services/
+    │   ├── admin.js
+    │   ├── booking.js
+    │   ├── googleCalendar.js
+    │   ├── googleSheets.js
+    │   └── reminders.js
+    └── utils/
+        └── formatDate.js

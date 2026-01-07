@@ -54,6 +54,8 @@ const HEADERS = {
     "Телефон",
     "Последняя_запись_UTC",
     "Всего_записей",
+    "BanStatus",
+    "BanReason",
   ],
   [SHEET_NAMES.WORKHOURS]: [
     "Дата",
@@ -495,7 +497,7 @@ async function createSheetsService(config) {
 
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.CLIENTS}!A2:H2000`,
+      range: `${SHEET_NAMES.CLIENTS}!A2:J2000`,
     });
     const rows = res.data.values || [];
 
@@ -517,7 +519,7 @@ async function createSheetsService(config) {
 
       await sheets.spreadsheets.values.append({
         spreadsheetId: config.google.sheetsId,
-        range: `${SHEET_NAMES.CLIENTS}!A2:H2`,
+        range: `${SHEET_NAMES.CLIENTS}!A2:J2`,
         valueInputOption: "RAW",
         insertDataOption: "INSERT_ROWS",
         requestBody: {
@@ -531,6 +533,8 @@ async function createSheetsService(config) {
               phone || "",
               lastAppointmentAtUtc || "",
               1,
+              "", // BanStatus
+              "", // BanReason
             ],
           ],
         },
@@ -548,7 +552,7 @@ async function createSheetsService(config) {
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: config.google.sheetsId,
-        range: `${SHEET_NAMES.CLIENTS}!A${rowNumber}:H${rowNumber}`,
+        range: `${SHEET_NAMES.CLIENTS}!A${rowNumber}:J${rowNumber}`,
         valueInputOption: "RAW",
         requestBody: {
           values: [rowValues],
@@ -764,7 +768,7 @@ async function createSheetsService(config) {
   async function getAllClients() {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.CLIENTS}!A2:H2000`,
+      range: `${SHEET_NAMES.CLIENTS}!A2:J2000`,
     });
     const rows = res.data.values || [];
 
@@ -778,6 +782,8 @@ async function createSheetsService(config) {
         Телефон,
         Последняя_запись_UTC,
         Всего_записей,
+        BanStatus,
+        BanReason,
       ] = row;
       return {
         id: ID_клиента,
@@ -788,8 +794,97 @@ async function createSheetsService(config) {
         phone: Телефон,
         lastAppointmentAtUtc: Последняя_запись_UTC,
         total: Number(Всего_записей) || 0,
+        banned: String(BanStatus || "").toLowerCase() === "banned",
+        banReason: BanReason || "",
       };
     });
+  }
+
+  async function getClientByTelegramId(telegramId) {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.CLIENTS}!A2:J2000`,
+    });
+    const rows = res.data.values || [];
+
+    let targetRowIndex = -1;
+    let targetRow = null;
+    rows.forEach((row, idx) => {
+      const existingTelegramId = row[2];
+      if (String(existingTelegramId) === String(telegramId)) {
+        targetRowIndex = idx;
+        targetRow = row;
+      }
+    });
+
+    if (targetRowIndex === -1) return null;
+    return { rowNumber: targetRowIndex + 2, rowValues: targetRow };
+  }
+
+  async function getUserBanStatus(telegramId) {
+    const entry = await getClientByTelegramId(telegramId);
+    if (!entry) return { banned: false, reason: "" };
+    const row = entry.rowValues || [];
+    const ban = String(row[8] || "").toLowerCase() === "banned";
+    const reason = row[9] || "";
+    return { banned: ban, reason };
+  }
+
+  async function setUserBanStatus(telegramId, banned, reason = "") {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.CLIENTS}!A2:J2000`,
+    });
+    const rows = res.data.values || [];
+
+    let targetRowIndex = -1;
+    rows.forEach((row, idx) => {
+      const existingTelegramId = row[2];
+      if (String(existingTelegramId) === String(telegramId)) {
+        targetRowIndex = idx;
+      }
+    });
+
+    const banValue = banned ? "banned" : "";
+
+    if (targetRowIndex === -1) {
+      const clientId = `C_${telegramId}`;
+      const firstSeenUtc = dayjs().utc().toISOString();
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.CLIENTS}!A2:J2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: {
+          values: [[
+            clientId,
+            firstSeenUtc,
+            String(telegramId),
+            "",
+            "",
+            "",
+            "",
+            0,
+            banValue,
+            reason || "",
+          ]],
+        },
+      });
+    } else {
+      const rowNumber = targetRowIndex + 2;
+      const rowValues = rows[targetRowIndex] || [];
+      for (let i = rowValues.length; i < 10; i += 1) rowValues[i] = "";
+      rowValues[8] = banValue;
+      rowValues[9] = reason || "";
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.CLIENTS}!A${rowNumber}:J${rowNumber}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [rowValues] },
+      });
+    }
+
+    return true;
   }
 
   return {
@@ -807,6 +902,9 @@ async function createSheetsService(config) {
     getAllClients,
     getWorkHoursForDate,
     invalidateWorkHoursCache,
+    getClientByTelegramId,
+    getUserBanStatus,
+    setUserBanStatus,
   };
 }
 
