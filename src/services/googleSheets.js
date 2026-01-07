@@ -848,39 +848,19 @@ async function createSheetsService(config) {
     const banValue = banned ? "banned" : "";
 
     if (targetRowIndex === -1) {
-      const clientId = `C_${telegramId}`;
-      const firstSeenUtc = dayjs().utc().toISOString();
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: config.google.sheetsId,
-        range: `${SHEET_NAMES.CLIENTS}!A2:J2`,
-        valueInputOption: "RAW",
-        insertDataOption: "INSERT_ROWS",
-        requestBody: {
-          values: [[
-            clientId,
-            firstSeenUtc,
-            String(telegramId),
-            "",
-            "",
-            "",
-            "",
-            0,
-            banValue,
-            reason || "",
-          ]],
-        },
-      });
+      // Пользователь не найден в таблице - не создаем новую строку при блокировке
+      // Новая строка должна создаваться только при регистрации через другие механизмы
+      return true;
     } else {
       const rowNumber = targetRowIndex + 2;
-      const rowValues = rows[targetRowIndex] || [];
-      for (let i = rowValues.length; i < 10; i += 1) rowValues[i] = "";
-      rowValues[8] = banValue;
-      rowValues[9] = reason || "";
+      // Обновляем только столбцы I (индекс 8) и J (индекс 9) - статус бана и причина
       await sheets.spreadsheets.values.update({
         spreadsheetId: config.google.sheetsId,
-        range: `${SHEET_NAMES.CLIENTS}!A${rowNumber}:J${rowNumber}`,
+        range: `${SHEET_NAMES.CLIENTS}!I${rowNumber}:J${rowNumber}`,
         valueInputOption: "RAW",
-        requestBody: { values: [rowValues] },
+        requestBody: {
+          values: [[banValue, reason || ""]],
+        },
       });
     }
 

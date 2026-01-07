@@ -41,15 +41,25 @@ async function banUser(telegramId, reason = "", sheetsService = null) {
 }
 
 async function unbanUser(telegramId, sheetsService = null) {
+  const telegramIdStr = String(telegramId);
   let bans = await readBans();
-  bans = bans.filter((b) => String(b) !== String(telegramId));
-  await writeBans(bans);
-  // Синхронизируем с таблицей, если сервис передан
+  const initialLength = bans.length;
+  bans = bans.filter((b) => String(b) !== telegramIdStr);
+  const removed = initialLength !== bans.length;
+
+  // Удаляем пользователя из banned.json, если он там был
+  if (removed) {
+    await writeBans(bans);
+  }
+
+  // Всегда синхронизируем с таблицей, если сервис передан
+  // Это нужно, чтобы очистить статус бана в таблице, даже если пользователя не было в banned.json
   try {
     if (sheetsService && sheetsService.setUserBanStatus) {
-      await sheetsService.setUserBanStatus(telegramId, false, "");
+      await sheetsService.setUserBanStatus(telegramIdStr, false, "");
     }
   } catch (e) {
+    console.error("Ошибка при обновлении статуса бана в таблице:", e);
     // не прерываем, если не удалось записать в таблицу
   }
   return true;
@@ -59,12 +69,7 @@ async function getBans() {
   return await readBans();
 }
 
-async function broadcastToClients(
-  bot,
-  sheetsService,
-  payload,
-  options = 200
-) {
+async function broadcastToClients(bot, sheetsService, payload, options = 200) {
   // Поддерживаем два режима: передан список получателей или отправка всем клиентам
   // Если передан опциональный параметр `options.recipients` - используем его (массив telegramId строк).
   // options: { recipients: string[] | null, throttleMs: number, skipBanned: boolean }
@@ -121,7 +126,10 @@ async function broadcastToClients(
           caption: payload.caption || undefined,
         });
       } else {
-        const text = typeof payload === "string" ? payload : (payload && payload.text) || "";
+        const text =
+          typeof payload === "string"
+            ? payload
+            : (payload && payload.text) || "";
         await bot.telegram.sendMessage(tid, text);
       }
       results.push({ id: tid, ok: true });
