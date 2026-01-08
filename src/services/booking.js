@@ -3,21 +3,13 @@
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const timezonePlugin = require("dayjs/plugin/timezone");
+const {
+  getAllServices,
+  getServiceByKey: getServiceByKeyFromFile,
+} = require("./services");
 
 dayjs.extend(utc);
 dayjs.extend(timezonePlugin);
-
-// Комментарий: перечень услуг и длительность в минутах
-const SERVICES = {
-  MEN_HAIRCUT: { key: "MEN_HAIRCUT", name: "Мужская стрижка", durationMin: 60 },
-  BEARD: { key: "BEARD", name: "Оформление бороды", durationMin: 30 },
-  BUZZCUT: { key: "BUZZCUT", name: "Стрижка под машинку", durationMin: 30 },
-  WOMEN_HAIRCUT: {
-    key: "WOMEN_HAIRCUT",
-    name: "Женская стрижка",
-    durationMin: 60,
-  },
-};
 
 // Статусы на русском
 const STATUSES = {
@@ -28,11 +20,11 @@ const STATUSES = {
 };
 
 function getServiceList() {
-  return Object.values(SERVICES);
+  return getAllServices();
 }
 
 function getServiceByKey(key) {
-  return SERVICES[key] || null;
+  return getServiceByKeyFromFile(key);
 }
 
 function generateId(prefix) {
@@ -224,7 +216,12 @@ function createBookingService({ sheetsService, config, calendarService }) {
 
     // Блокируем создание записи для забаненных пользователей
     try {
-      if (client && client.telegramId && sheetsService && sheetsService.getUserBanStatus) {
+      if (
+        client &&
+        client.telegramId &&
+        sheetsService &&
+        sheetsService.getUserBanStatus
+      ) {
         const st = await sheetsService.getUserBanStatus(client.telegramId);
         if (st && st.banned) {
           return { ok: false, reason: "banned" };

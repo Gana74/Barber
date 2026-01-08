@@ -373,6 +373,97 @@ function setupReminders({
       timezone: config.defaultTimezone,
     }
   );
+
+  // Напоминание клиентам, которые не подстригались более 21 дня
+  cron.schedule(
+    "0 11 * * *",
+    async () => {
+      try {
+        const timezone = await sheetsService.getTimezone();
+        const nowTz = dayjs().tz(timezone);
+
+        const clientsForReminder =
+          await sheetsService.getClientsFor21DayReminder();
+
+        if (!clientsForReminder || clientsForReminder.length === 0) {
+          console.log(
+            `[${dayjs().format(
+              "YYYY-MM-DD HH:mm:ss"
+            )}] Напоминания 21 день: нет клиентов для напоминания`
+          );
+          return;
+        }
+
+        let sentCount = 0;
+        let errorCount = 0;
+
+        for (const client of clientsForReminder) {
+          if (!client.telegramId) continue;
+
+          const clientName = client.name || client.username || "друг";
+
+          const msg = `Привет, ${clientName}! Тебя давно небыло на стрижке, пора подстричься!`;
+
+          try {
+            await bot.telegram.sendMessage(client.telegramId, msg, {
+              parse_mode: "Markdown",
+            });
+
+            // Помечаем напоминание как отправленное
+            await sheetsService.mark21DayReminderSent(client.telegramId);
+            sentCount++;
+
+            // Добавляем небольшую задержку между сообщениями
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          } catch (err) {
+            errorCount++;
+            console.error(
+              `Ошибка отправки напоминания 21 день пользователю ${client.telegramId}:`,
+              err.message
+            );
+
+            // Если пользователь заблокировал бота, не помечаем напоминание как отправленное
+            if (err.response && err.response.error_code === 403) {
+              console.warn(
+                `Пользователь ${client.telegramId} заблокировал бота, напоминание не отправлено`
+              );
+            }
+          }
+        }
+
+        // Логируем результат
+        console.log(
+          `[${dayjs().format(
+            "YYYY-MM-DD HH:mm:ss"
+          )}] Напоминания 21 день отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`
+        );
+
+        // Отправляем отчет менеджеру если настроен
+        if (config.managerChatId && (sentCount > 0 || errorCount > 0)) {
+          const reportMsg = [
+            "📊 *Отчет по напоминаниям 21 день*",
+            `📅 Дата: ${nowTz.format("YYYY-MM-DD")}`,
+            `✅ Отправлено: ${sentCount}`,
+            `❌ Ошибок: ${errorCount}`,
+            `⏰ Время отправки: ${nowTz.format("HH:mm:ss")}`,
+          ].join("\n");
+
+          try {
+            await bot.telegram.sendMessage(config.managerChatId, reportMsg, {
+              parse_mode: "Markdown",
+            });
+          } catch (err) {
+            console.error("Ошибка отправки отчета менеджеру:", err.message);
+          }
+        }
+      } catch (err) {
+        console.error("Критическая ошибка в напоминаниях 21 день:", err);
+      }
+    },
+    {
+      timezone: config.defaultTimezone,
+    }
+  );
 }
 
 module.exports = {

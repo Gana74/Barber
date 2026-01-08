@@ -8,6 +8,7 @@ const { createBookingService, getServiceList } = require("../services/booking");
 const adminService = require("../services/admin");
 const { createBookingScene } = require("./scenes/bookingScene");
 const { formatDate } = require("../utils/formatDate");
+const servicesService = require("../services/services");
 
 function createBot({ config, sheetsService, calendarService }) {
   const bot = new Telegraf(config.botToken);
@@ -73,6 +74,17 @@ function createBot({ config, sheetsService, calendarService }) {
   ]);
 
   bot.use(stage.middleware());
+
+  // Настройка меню команд (кнопка меню в левой части поля ввода)
+  bot.telegram
+    .setMyCommands([
+      { command: "start", description: "Начать общение с начала" },
+      { command: "book", description: "Записаться на стрижку" },
+      { command: "services", description: "Посмотреть список услуг" },
+    ])
+    .catch((err) => {
+      console.warn("Failed to set bot commands menu:", err.message);
+    });
 
   function isManager(ctx) {
     try {
@@ -157,7 +169,10 @@ function createBot({ config, sheetsService, calendarService }) {
   bot.command("services", async (ctx) => {
     const services = getServiceList();
     const text = services
-      .map((s) => `- ${s.name} (${s.durationMin} мин)`)
+      .map((s) => {
+        const priceText = s.price !== null ? ` — ${s.price} ₽` : "";
+        return `- ${s.name}${priceText} (${s.durationMin} мин)`;
+      })
       .join("\n");
     await ctx.reply(`Список услуг:\n${text}`);
   });
@@ -242,7 +257,14 @@ function createBot({ config, sheetsService, calendarService }) {
     ["Отменить запись (по ID)"],
     ["Забанить пользователя", "Разбанить пользователя"],
     ["Массовая рассылка"],
+    ["Управление услугами"],
     ["Вернуться в пользовательский режим"],
+  ]).resize();
+
+  const servicesKeyboard = Markup.keyboard([
+    ["Добавить услугу", "Изменить услугу"],
+    ["Удалить услугу", "Список услуг"],
+    ["Назад в админ-меню"],
   ]).resize();
 
   bot.command("admin", async (ctx) => {
@@ -390,6 +412,182 @@ function createBot({ config, sheetsService, calendarService }) {
     );
   });
 
+  // --- Управление услугами ---
+  bot.hears("Управление услугами", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      await ctx.reply(
+        "Управление услугами. Выберите действие:",
+        servicesKeyboard
+      );
+    }
+  });
+
+  bot.hears("Назад в админ-меню", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      delete ctx.session.servicesAction;
+      await ctx.reply(
+        "Включён режим администратора. Выберите действие:",
+        adminKeyboard
+      );
+    }
+  });
+
+  bot.hears("Список услуг", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      const services = servicesService.getAllServices();
+      if (!services.length) {
+        await ctx.reply("Нет услуг в системе.");
+        return;
+      }
+      const text = services
+        .map(
+          (s) =>
+            `• ${s.name}\n  Ключ: ${s.key}\n  Цена: ${
+              s.price !== null ? s.price + " ₽" : "не указана"
+            }\n  Продолжительность: ${s.durationMin} мин`
+        )
+        .join("\n\n");
+      await ctx.reply(`Список услуг:\n\n${text}`);
+    }
+  });
+
+  bot.hears("Добавить услугу", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      ctx.session.servicesAction = { type: "create", step: "key" };
+      await ctx.reply(
+        "Добавление новой услуги.\n\nОтправьте ключ услуги (латинские буквы, цифры, подчёркивания, например: NEW_SERVICE):\nДля отмены напишите /admin_cancel"
+      );
+    }
+  });
+
+  bot.hears("Изменить услугу", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      const services = servicesService.getAllServices();
+      if (!services.length) {
+        await ctx.reply("Нет услуг для изменения.");
+        return;
+      }
+      const buttons = services.map((s) => [
+        Markup.button.callback(`${s.name} (${s.key})`, `service_edit:${s.key}`),
+      ]);
+      buttons.push([Markup.button.callback("Отменить", "service_cancel")]);
+      await ctx.reply(
+        "Выберите услугу для изменения:",
+        Markup.inlineKeyboard(buttons)
+      );
+    }
+  });
+
+  bot.hears("Удалить услугу", async (ctx) => {
+    if (!isManager(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      const services = servicesService.getAllServices();
+      if (!services.length) {
+        await ctx.reply("Нет услуг для удаления.");
+        return;
+      }
+      const buttons = services.map((s) => [
+        Markup.button.callback(
+          `${s.name} (${s.key})`,
+          `service_delete:${s.key}`
+        ),
+      ]);
+      buttons.push([Markup.button.callback("Отменить", "service_cancel")]);
+      await ctx.reply(
+        "Выберите услугу для удаления:",
+        Markup.inlineKeyboard(buttons)
+      );
+    }
+  });
+
+  bot.action(/service_edit:(.+)/, async (ctx) => {
+    if (!isManager(ctx)) return;
+    await ctx.answerCbQuery();
+    const key = ctx.match[1];
+    const service = servicesService.getServiceByKey(key);
+    if (!service) {
+      await ctx.reply("Услуга не найдена.");
+      return;
+    }
+    ctx.session.servicesAction = {
+      type: "update",
+      key,
+      step: "field",
+    };
+    const buttons = [
+      [Markup.button.callback("Название", `service_field:name`)],
+      [Markup.button.callback("Цена", `service_field:price`)],
+      [
+        Markup.button.callback(
+          "Продолжительность",
+          `service_field:durationMin`
+        ),
+      ],
+      [Markup.button.callback("Отменить", "service_cancel")],
+    ];
+    await ctx.reply(
+      `Редактирование услуги: ${service.name}\n\nТекущие значения:\nНазвание: ${
+        service.name
+      }\nЦена: ${
+        service.price !== null ? service.price + " ₽" : "не указана"
+      }\nПродолжительность: ${
+        service.durationMin
+      } мин\n\nВыберите поле для изменения:`,
+      Markup.inlineKeyboard(buttons)
+    );
+  });
+
+  bot.action(/service_field:(.+)/, async (ctx) => {
+    if (!isManager(ctx)) return;
+    await ctx.answerCbQuery();
+    const field = ctx.match[1];
+    if (
+      !ctx.session.servicesAction ||
+      ctx.session.servicesAction.type !== "update"
+    ) {
+      await ctx.reply("Сессия истекла. Начните заново.");
+      return;
+    }
+    ctx.session.servicesAction.step = field;
+    const fieldNames = {
+      name: "название",
+      price: "цену (число или 'удалить' для очистки)",
+      durationMin: "продолжительность в минутах",
+    };
+    await ctx.reply(
+      `Отправьте новое значение для поля "${fieldNames[field]}":\nДля отмены напишите /admin_cancel`
+    );
+  });
+
+  bot.action(/service_delete:(.+)/, async (ctx) => {
+    if (!isManager(ctx)) return;
+    await ctx.answerCbQuery();
+    const key = ctx.match[1];
+    const service = servicesService.getServiceByKey(key);
+    if (!service) {
+      await ctx.reply("Услуга не найдена.");
+      return;
+    }
+    const result = servicesService.deleteService(key);
+    if (result.ok) {
+      await ctx.reply(`Услуга "${service.name}" удалена.`);
+    } else {
+      await ctx.reply(`Ошибка: ${result.error}`);
+    }
+  });
+
+  bot.action("service_cancel", async (ctx) => {
+    if (!isManager(ctx)) return;
+    await ctx.answerCbQuery();
+    delete ctx.session.servicesAction;
+    await ctx.reply("Отменено.");
+  });
+
   bot.action("admin:broadcast_confirm", async (ctx) => {
     if (!isManager(ctx)) return;
     await ctx.answerCbQuery();
@@ -429,12 +627,190 @@ function createBot({ config, sheetsService, calendarService }) {
   bot.command("admin_cancel", async (ctx) => {
     if (!isManager(ctx)) return;
     delete ctx.session.adminAction;
+    delete ctx.session.servicesAction;
     await ctx.reply("Действие админа отменено.");
   });
 
   bot.on("text", async (ctx, next) => {
     if (!isManager(ctx) || !(ctx.session && ctx.session.mode === "admin"))
       return next();
+
+    // Обработка управления услугами
+    const servicesAction = ctx.session && ctx.session.servicesAction;
+    if (servicesAction) {
+      const text = ctx.message.text && ctx.message.text.trim();
+
+      if (servicesAction.type === "create") {
+        if (servicesAction.step === "key") {
+          const key = text.toUpperCase();
+          const existing = servicesService.getServiceByKey(key);
+          if (existing) {
+            await ctx.reply(
+              "Услуга с таким ключом уже существует. Попробуйте другой ключ или /admin_cancel для отмены."
+            );
+            return;
+          }
+          if (!/^[A-Za-z0-9_]+$/.test(key)) {
+            await ctx.reply(
+              "Ключ должен содержать только латинские буквы, цифры и подчёркивания. Попробуйте снова или /admin_cancel для отмены."
+            );
+            return;
+          }
+          ctx.session.servicesAction = { type: "create", step: "name", key };
+          await ctx.reply("Отправьте название услуги:");
+          return;
+        }
+        if (servicesAction.step === "name") {
+          if (!text || text.trim().length === 0) {
+            await ctx.reply(
+              "Название не может быть пустым. Попробуйте снова или /admin_cancel для отмены."
+            );
+            return;
+          }
+          ctx.session.servicesAction = {
+            type: "create",
+            step: "price",
+            key: servicesAction.key,
+            name: text.trim(),
+          };
+          await ctx.reply(
+            "Отправьте цену услуги (число в рублях) или 'нет' если цена не указана:"
+          );
+          return;
+        }
+        if (servicesAction.step === "price") {
+          let price = null;
+          if (text.toLowerCase() !== "нет" && text.trim() !== "") {
+            const priceNum = Number(text);
+            if (isNaN(priceNum) || priceNum < 0) {
+              await ctx.reply(
+                "Цена должна быть неотрицательным числом или 'нет'. Попробуйте снова или /admin_cancel для отмены."
+              );
+              return;
+            }
+            price = priceNum;
+          }
+          ctx.session.servicesAction = {
+            type: "create",
+            step: "duration",
+            key: servicesAction.key,
+            name: servicesAction.name,
+            price,
+          };
+          await ctx.reply("Отправьте продолжительность услуги в минутах:");
+          return;
+        }
+        if (servicesAction.step === "duration") {
+          const durationNum = Number(text);
+          if (isNaN(durationNum) || durationNum <= 0) {
+            await ctx.reply(
+              "Продолжительность должна быть положительным числом. Попробуйте снова или /admin_cancel для отмены."
+            );
+            return;
+          }
+          const result = servicesService.createService({
+            key: servicesAction.key,
+            name: servicesAction.name,
+            price: servicesAction.price,
+            durationMin: durationNum,
+          });
+          if (result.ok) {
+            await ctx.reply(
+              `Услуга "${result.service.name}" успешно создана!\nКлюч: ${
+                result.service.key
+              }\nЦена: ${
+                result.service.price !== null
+                  ? result.service.price + " ₽"
+                  : "не указана"
+              }\nПродолжительность: ${result.service.durationMin} мин`
+            );
+          } else {
+            await ctx.reply(`Ошибка при создании услуги: ${result.error}`);
+          }
+          delete ctx.session.servicesAction;
+          return;
+        }
+      }
+
+      if (servicesAction.type === "update") {
+        const field = servicesAction.step;
+        if (field === "name") {
+          if (!text || text.trim().length === 0) {
+            await ctx.reply(
+              "Название не может быть пустым. Попробуйте снова или /admin_cancel для отмены."
+            );
+            return;
+          }
+          const result = servicesService.updateService(servicesAction.key, {
+            name: text.trim(),
+          });
+          if (result.ok) {
+            await ctx.reply(
+              `Название услуги обновлено: "${result.service.name}"`
+            );
+          } else {
+            await ctx.reply(`Ошибка: ${result.error}`);
+          }
+          delete ctx.session.servicesAction;
+          return;
+        }
+        if (field === "price") {
+          let price = null;
+          if (
+            text.toLowerCase() !== "удалить" &&
+            text.toLowerCase() !== "нет" &&
+            text.trim() !== ""
+          ) {
+            const priceNum = Number(text);
+            if (isNaN(priceNum) || priceNum < 0) {
+              await ctx.reply(
+                "Цена должна быть неотрицательным числом, 'удалить' или 'нет'. Попробуйте снова или /admin_cancel для отмены."
+              );
+              return;
+            }
+            price = priceNum;
+          }
+          const result = servicesService.updateService(servicesAction.key, {
+            price,
+          });
+          if (result.ok) {
+            await ctx.reply(
+              `Цена услуги обновлена: ${
+                result.service.price !== null
+                  ? result.service.price + " ₽"
+                  : "не указана"
+              }`
+            );
+          } else {
+            await ctx.reply(`Ошибка: ${result.error}`);
+          }
+          delete ctx.session.servicesAction;
+          return;
+        }
+        if (field === "durationMin") {
+          const durationNum = Number(text);
+          if (isNaN(durationNum) || durationNum <= 0) {
+            await ctx.reply(
+              "Продолжительность должна быть положительным числом. Попробуйте снова или /admin_cancel для отмены."
+            );
+            return;
+          }
+          const result = servicesService.updateService(servicesAction.key, {
+            durationMin: durationNum,
+          });
+          if (result.ok) {
+            await ctx.reply(
+              `Продолжительность услуги обновлена: ${result.service.durationMin} мин`
+            );
+          } else {
+            await ctx.reply(`Ошибка: ${result.error}`);
+          }
+          delete ctx.session.servicesAction;
+          return;
+        }
+      }
+    }
+
     const action =
       ctx.session && ctx.session.adminAction && ctx.session.adminAction.type;
     if (!action) return next();
@@ -539,7 +915,11 @@ function createBot({ config, sheetsService, calendarService }) {
         return;
       }
 
-      ctx.session.adminAction = { type: "broadcast", payload: { kind: "text", text: message }, recipients };
+      ctx.session.adminAction = {
+        type: "broadcast",
+        payload: { kind: "text", text: message },
+        recipients,
+      };
 
       const sample = recipients.slice(0, 6).join(", ");
       const keyboard = Markup.inlineKeyboard([
@@ -565,8 +945,10 @@ function createBot({ config, sheetsService, calendarService }) {
 
   // Приём фото от админа для массовой рассылки
   bot.on("photo", async (ctx, next) => {
-    if (!isManager(ctx) || !(ctx.session && ctx.session.mode === "admin")) return next();
-    const action = ctx.session && ctx.session.adminAction && ctx.session.adminAction.type;
+    if (!isManager(ctx) || !(ctx.session && ctx.session.mode === "admin"))
+      return next();
+    const action =
+      ctx.session && ctx.session.adminAction && ctx.session.adminAction.type;
     if (action !== "broadcast") return next();
 
     const photos = ctx.message.photo || [];
@@ -584,20 +966,34 @@ function createBot({ config, sheetsService, calendarService }) {
       .filter((id) => id && !bans.some((b) => String(b) === String(id)));
 
     if (!recipients.length) {
-      await ctx.reply("Нет получателей для рассылки (нет клиентов с telegramId или все в бане).");
+      await ctx.reply(
+        "Нет получателей для рассылки (нет клиентов с telegramId или все в бане)."
+      );
       delete ctx.session.adminAction;
       return;
     }
 
-    ctx.session.adminAction = { type: "broadcast", payload: { kind: "photo", fileId, caption }, recipients };
+    ctx.session.adminAction = {
+      type: "broadcast",
+      payload: { kind: "photo", fileId, caption },
+      recipients,
+    };
 
     const sample = recipients.slice(0, 6).join(", ");
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback("Подтвердить рассылку ✅", "admin:broadcast_confirm")],
+      [
+        Markup.button.callback(
+          "Подтвердить рассылку ✅",
+          "admin:broadcast_confirm"
+        ),
+      ],
       [Markup.button.callback("Отменить ❌", "admin:broadcast_cancel")],
     ]);
 
-    await ctx.reply("Предпросмотр фото-письма. Подпись:" + (caption ? `\n${caption}` : " (без подписи)"));
+    await ctx.reply(
+      "Предпросмотр фото-письма. Подпись:" +
+        (caption ? `\n${caption}` : " (без подписи)")
+    );
     await ctx.replyWithPhoto(fileId);
     await ctx.reply(
       `Получателей: ${recipients.length}\nПримеры: ${sample}\n\nПодтвердите отправку или отмените.`,

@@ -1,0 +1,26 @@
+{
+  "MEN_HAIRCUT": {
+    "key": "MEN_HAIRCUT",
+    "name": "Мужская стрижка",
+    "price": 1500,
+    "durationMin": 60
+  },
+  "BEARD": {
+    "key": "BEARD",
+    "name": "Оформление бороды",
+    "price": 1000,
+    "durationMin": 30
+  },
+  "BUZZCUT": {
+    "key": "BUZZCUT",
+    "name": "Стрижка под машинку",
+    "price": null,
+    "durationMin": 30
+  },
+  "WOMEN_HAIRCUT": {
+    "key": "WOMEN_HAIRCUT",
+    "name": "Женская стрижка",
+    "price": null,
+    "durationMin": 60
+  }
+}

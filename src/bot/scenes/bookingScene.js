@@ -103,14 +103,21 @@ function createBookingScene({ bookingService, sheetsService, config }) {
     async (ctx) => {
       // Ранняя проверка бана пользователя
       try {
-        if (ctx.from && ctx.from.id && sheetsService && sheetsService.getUserBanStatus) {
+        if (
+          ctx.from &&
+          ctx.from.id &&
+          sheetsService &&
+          sheetsService.getUserBanStatus
+        ) {
           const st = await sheetsService.getUserBanStatus(ctx.from.id);
           if (st && st.banned) {
             await ctx.reply(
               "Ваш аккаунт заблокирован для записи. Свяжитесь с администратором.",
               Markup.removeKeyboard()
             );
-            try { await ctx.scene.leave(); } catch (e) {}
+            try {
+              await ctx.scene.leave();
+            } catch (e) {}
             return;
           }
         }
@@ -119,7 +126,10 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       }
 
       const services = bookingService.getServiceList();
-      const buttons = services.map((s) => [s.name]);
+      const buttons = services.map((s) => {
+        const priceText = s.price !== null ? ` (${s.price} ₽)` : "";
+        return [s.name + priceText];
+      });
 
       // Добавляем кнопку "Назад" в конец
       buttons.push(["Назад ⬅️"]);
@@ -153,7 +163,11 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         return;
       }
 
-      const service = services.find((s) => s.name === text);
+      // Ищем услугу по названию (кнопка может содержать цену в скобках)
+      const service = services.find((s) => {
+        const priceText = s.price !== null ? ` (${s.price} ₽)` : "";
+        return text === s.name + priceText || text === s.name;
+      });
 
       if (!service) {
         await ctx.reply("Пожалуйста, выбери услугу из списка кнопок.");
