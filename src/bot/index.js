@@ -303,7 +303,7 @@ function createBot({ config, sheetsService, calendarService }) {
           appointment.timeStart
         }–${appointment.timeEnd}\nКлиент: ${appointment.clientName}\nТелефон: ${
           appointment.phone
-        }\nid=${appointment.id}`
+        }\nКод отмены: ${appointment.cancelCode}`
       );
     }
   });
@@ -361,9 +361,9 @@ function createBot({ config, sheetsService, calendarService }) {
         .slice(0, 50)
         .map(
           (a) =>
-            `${a.id} — ${a.service} ${formatDate(a.date)} ${a.timeStart}-${
-              a.timeEnd
-            } — ${a.clientName} (${a.phone})`
+            `Код отмены: ${a.cancelCode || "N/A"} — ${a.service} ${formatDate(
+              a.date
+            )} ${a.timeStart}-${a.timeEnd} — ${a.clientName} (${a.phone})`
         );
       await ctx.reply(
         `Активные записи (показано ${lines.length} из ${all.length}):\n` +
@@ -386,7 +386,6 @@ function createBot({ config, sheetsService, calendarService }) {
     }
 
     const inputActions = new Set([
-      "cancel_booking",
       "cancel_booking_by_code",
       "ban",
       "unban",
@@ -398,8 +397,6 @@ function createBot({ config, sheetsService, calendarService }) {
       await ctx.reply(
         action === "broadcast"
           ? "Отправьте текст для рассылки или пришлите фото с подписью. Для отмены напишите /admin_cancel"
-          : action === "cancel_booking"
-          ? "Отправьте ID записи, которую нужно отменить. Для отмены напишите /admin_cancel"
           : action === "cancel_booking_by_code"
           ? "Отправьте код отмены записи (например: A3K9X2). Для отмены напишите /admin_cancel"
           : action === "ban"
@@ -431,13 +428,6 @@ function createBot({ config, sheetsService, calendarService }) {
     if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       await handleAdminAction(ctx, "stats");
-    }
-  });
-
-  bot.hears("Отменить запись (по ID)", async (ctx) => {
-    if (!isAdmin(ctx)) return;
-    if (ctx.session && ctx.session.mode === "admin") {
-      await handleAdminAction(ctx, "cancel_booking");
     }
   });
 
@@ -902,73 +892,6 @@ function createBot({ config, sheetsService, calendarService }) {
     if (!action) return next();
 
     const text = ctx.message.text && ctx.message.text.trim();
-
-    if (action === "cancel_booking") {
-      const id = text;
-
-      // Валидация ID записи
-      if (!validateAppointmentId(id)) {
-        await ctx.reply("Неверный формат ID записи. /admin_cancel для отмены.");
-        return;
-      }
-
-      const appointment = await sheetsService.getAppointmentById(id);
-      if (!appointment) {
-        await ctx.reply("Запись не найдена. /admin_cancel для отмены.");
-        return;
-      }
-      const cancelledAtUtc = new Date().toISOString();
-      const ok = await sheetsService.updateAppointmentStatus(
-        id,
-        bookingService.STATUSES.CANCELLED,
-        { cancelledAtUtc }
-      );
-      if (!ok) {
-        await ctx.reply("Не удалось отменить запись.");
-        logAdminAction(
-          ctx.from.id,
-          "admin_cancel_booking",
-          { appointmentId: id },
-          "failed"
-        );
-      } else {
-        await ctx.reply(`Запись ${id} отменена.`);
-        // Логирование критичного действия (админ отменил запись)
-        logCriticalAction(
-          ctx.from.id,
-          "admin_cancel_booking",
-          {
-            appointmentId: id,
-            clientTelegramId: appointment.telegramId,
-            date: appointment.date,
-            time: appointment.timeStart,
-          },
-          "success"
-        );
-        try {
-          if (calendarService && calendarService.deleteEventForAppointmentId) {
-            await calendarService.deleteEventForAppointmentId(id);
-          }
-        } catch (e) {
-          console.warn(
-            "Calendar delete failed for appointment (admin cancel):",
-            e.message || e
-          );
-        }
-        if (appointment.telegramId) {
-          try {
-            await ctx.telegram.sendMessage(
-              String(appointment.telegramId),
-              `Ваша запись на ${formatDate(appointment.date)} ${
-                appointment.timeStart
-              } отменена менеджером.`
-            );
-          } catch (e) {}
-        }
-      }
-      delete ctx.session.adminAction;
-      return;
-    }
 
     if (action === "cancel_booking_by_code") {
       const cancelCode = text.toUpperCase().trim();
