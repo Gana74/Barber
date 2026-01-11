@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "NODE_ENV=development node index.js"
+    "dev": "NODE_ENV=development node index.js",
+    "audit": "npm audit",
+    "audit:fix": "npm audit fix",
+    "security-check": "npm audit && npm outdated"
   },
   "dependencies": {
     "dayjs": "^1.11.13",

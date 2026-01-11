@@ -1,0 +1,5 @@
+{"timestamp":"2026-01-11T11:48:52.009Z","level":"INFO","userId":502105220,"action":"appointment_created","details":{"appointmentId":"A_mk9o7sj8_mhvruz","service":"Комплекс (мужская стрижка + оформление бороды)","date":"2026-01-12","timeStart":"10:00","timeEnd":"11:30"},"result":"success"}
+{"timestamp":"2026-01-11T11:49:31.627Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}
+{"timestamp":"2026-01-11T11:57:21.795Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}
+{"timestamp":"2026-01-11T12:00:53.130Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}
+{"timestamp":"2026-01-11T12:01:53.397Z","level":"CRITICAL","userId":502105220,"action":"admin_cancel_booking_by_code","details":{"appointmentId":"A_mk9o7sj8_mhvruz","cancelCode":"2A5L65","clientTelegramId":"502105220","date":"2026-01-12","time":"10:00"},"result":"success"}

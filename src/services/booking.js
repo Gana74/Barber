@@ -427,10 +427,49 @@ function createBookingService({ sheetsService, config, calendarService }) {
     };
   }
 
+  async function cancelAppointmentByCode(cancelCode) {
+    // Комментарий: отмена записи по коду отмены (для админа, без проверки владельца)
+    const appointment = await sheetsService.getAppointmentByCancelCode(cancelCode);
+
+    if (!appointment) {
+      return { ok: false, reason: "appointment_not_found" };
+    }
+
+    // Проверяем, что запись ещё активна
+    if (appointment.status !== STATUSES.ACTIVE) {
+      return { ok: false, reason: "already_cancelled" };
+    }
+
+    const cancelledAtUtc = dayjs().utc().toISOString();
+    const success = await sheetsService.updateAppointmentStatus(
+      appointment.id,
+      STATUSES.CANCELLED,
+      { cancelledAtUtc }
+    );
+
+    if (!success) {
+      return { ok: false, reason: "update_failed" };
+    }
+
+    // Удаляем/обновляем событие в календаре при наличии сервиса
+    try {
+      if (calendarService && calendarService.deleteEventForAppointmentId) {
+        await calendarService.deleteEventForAppointmentId(appointment.id);
+      }
+    } catch (e) {
+      console.warn("Calendar delete failed for appointment:", e.message || e);
+    }
+    return {
+      ok: true,
+      appointment: { ...appointment, status: STATUSES.CANCELLED },
+    };
+  }
+
   return {
     getAvailableSlotsForService,
     bookAppointment,
     cancelAppointment,
+    cancelAppointmentByCode,
     getServiceList,
     getServiceByKey,
     STATUSES,

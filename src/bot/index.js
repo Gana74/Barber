@@ -9,6 +9,20 @@ const adminService = require("../services/admin");
 const { createBookingScene } = require("./scenes/bookingScene");
 const { formatDate } = require("../utils/formatDate");
 const servicesService = require("../services/services");
+const { createRateLimiter } = require("../middleware/rateLimiter");
+const {
+  validateTelegramId,
+  validateAppointmentId,
+  sanitizeText,
+  validateDataSize,
+} = require("../utils/security");
+const {
+  logCriticalAction,
+  logAdminAction,
+  logError,
+  logAction,
+} = require("../utils/logger");
+const { scheduleBackup } = require("../utils/backup");
 
 function createBot({ config, sheetsService, calendarService }) {
   const bot = new Telegraf(config.botToken);
@@ -75,6 +89,29 @@ function createBot({ config, sheetsService, calendarService }) {
 
   bot.use(stage.middleware());
 
+  // Rate limiting middleware - подключаем перед всеми обработчиками
+  const rateLimiter = createRateLimiter({
+    generalLimit: 30, // Общие команды: 30/минуту
+    adminLimit: 10, // Админ-команды: 10/минуту
+    sceneLimit: 5, // Сцены: 5/минуту
+  });
+  bot.use(rateLimiter);
+
+  // Middleware для защиты сессий: проверка размера и валидация структуры
+  bot.use(async (ctx, next) => {
+    if (ctx.session) {
+      // Проверяем размер сессии (максимум 10KB)
+      if (!validateDataSize(ctx.session, 10)) {
+        // Сессия слишком большая, очищаем её
+        ctx.session = {};
+        console.warn(
+          `Session too large for user ${ctx.from?.id}, cleared session`
+        );
+      }
+    }
+    return next();
+  });
+
   // Настройка меню команд (кнопка меню в левой части поля ввода)
   bot.telegram
     .setMyCommands([
@@ -88,7 +125,7 @@ function createBot({ config, sheetsService, calendarService }) {
       console.warn("Failed to set bot commands menu:", err.message);
     });
 
-  function isManager(ctx) {
+  function isAdmin(ctx) {
     try {
       const mgr = String(config.managerChatId || "");
       const fromId = String(ctx.from && ctx.from.id ? ctx.from.id : "");
@@ -191,6 +228,13 @@ function createBot({ config, sheetsService, calendarService }) {
 
   bot.action(/cancel_app:(.+)/, async (ctx) => {
     const id = ctx.match[1];
+
+    // Валидация ID записи
+    if (!validateAppointmentId(id)) {
+      await ctx.answerCbQuery("Неверный формат ID записи.");
+      return;
+    }
+
     await ctx.answerCbQuery("Отменяем запись...");
 
     const appointment = await sheetsService.getAppointmentById(id);
@@ -219,6 +263,18 @@ function createBot({ config, sheetsService, calendarService }) {
       );
       return;
     }
+
+    // Логирование отмены записи пользователем
+    logAction(
+      ctx.from.id,
+      "appointment_cancelled",
+      {
+        appointmentId: id,
+        date: appointment.date,
+        time: appointment.timeStart,
+      },
+      "success"
+    );
 
     await ctx.reply(
       `Запись на ${formatDate(appointment.date)} ${
@@ -256,7 +312,7 @@ function createBot({ config, sheetsService, calendarService }) {
   // reply-style keyboard for admin (visual like user)
   const adminKeyboard = Markup.keyboard([
     ["Просмотр записей", "Статистика"],
-    ["Отменить запись (по ID)"],
+    ["Отменить запись (по коду)"],
     ["Забанить пользователя", "Разбанить пользователя"],
     ["Массовая рассылка"],
     ["Управление услугами"],
@@ -270,9 +326,10 @@ function createBot({ config, sheetsService, calendarService }) {
   ]).resize();
 
   bot.command("admin", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     ctx.session = ctx.session || {};
     ctx.session.mode = "admin";
+    logAdminAction(ctx.from.id, "admin_mode_enabled", {}, "success");
     await ctx.reply(
       "Включён режим администратора. Выберите действие:",
       adminKeyboard
@@ -291,7 +348,7 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   async function handleAdminAction(ctx, action) {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (!action) return;
 
     if (action === "all_bookings") {
@@ -330,6 +387,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
     const inputActions = new Set([
       "cancel_booking",
+      "cancel_booking_by_code",
       "ban",
       "unban",
       "broadcast",
@@ -342,6 +400,8 @@ function createBot({ config, sheetsService, calendarService }) {
           ? "Отправьте текст для рассылки или пришлите фото с подписью. Для отмены напишите /admin_cancel"
           : action === "cancel_booking"
           ? "Отправьте ID записи, которую нужно отменить. Для отмены напишите /admin_cancel"
+          : action === "cancel_booking_by_code"
+          ? "Отправьте код отмены записи (например: A3K9X2). Для отмены напишите /admin_cancel"
           : action === "ban"
           ? "Отправьте Telegram ID или @username пользователя для бана. Для отмены напишите /admin_cancel"
           : "Отправьте Telegram ID пользователя для разбанивания. Для отмены напишите /admin_cancel"
@@ -352,7 +412,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
   // keep callback handlers for broadcast confirm/cancel
   bot.action(/admin:(.+)/, async (ctx, next) => {
-    if (!isManager(ctx)) return next();
+    if (!isAdmin(ctx)) return next();
     const action = ctx.match[1];
     await ctx.answerCbQuery();
     await handleAdminAction(ctx, action);
@@ -361,49 +421,56 @@ function createBot({ config, sheetsService, calendarService }) {
 
   // map reply-keyboard presses to admin actions
   bot.hears("Просмотр записей", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       await handleAdminAction(ctx, "all_bookings");
     }
   });
 
   bot.hears("Статистика", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       await handleAdminAction(ctx, "stats");
     }
   });
 
   bot.hears("Отменить запись (по ID)", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       await handleAdminAction(ctx, "cancel_booking");
     }
   });
 
+  bot.hears("Отменить запись (по коду)", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      await handleAdminAction(ctx, "cancel_booking_by_code");
+    }
+  });
+
   bot.hears("Забанить пользователя", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       await handleAdminAction(ctx, "ban");
     }
   });
 
   bot.hears("Разбанить пользователя", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       await handleAdminAction(ctx, "unban");
     }
   });
 
   bot.hears("Массовая рассылка", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       await handleAdminAction(ctx, "broadcast");
     }
   });
 
   bot.hears("Вернуться в пользовательский режим", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     ctx.session = ctx.session || {};
     ctx.session.mode = "user";
     await ctx.reply(
@@ -416,7 +483,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
   // --- Управление услугами ---
   bot.hears("Управление услугами", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       await ctx.reply(
         "Управление услугами. Выберите действие:",
@@ -426,7 +493,7 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   bot.hears("Назад в админ-меню", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       delete ctx.session.servicesAction;
       await ctx.reply(
@@ -437,7 +504,7 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   bot.hears("Список услуг", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       const services = servicesService.getAllServices();
       if (!services.length) {
@@ -457,7 +524,7 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   bot.hears("Добавить услугу", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       ctx.session.servicesAction = { type: "create", step: "key" };
       await ctx.reply(
@@ -467,7 +534,7 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   bot.hears("Изменить услугу", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       const services = servicesService.getAllServices();
       if (!services.length) {
@@ -486,7 +553,7 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   bot.hears("Удалить услугу", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       const services = servicesService.getAllServices();
       if (!services.length) {
@@ -508,7 +575,7 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   bot.action(/service_edit:(.+)/, async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
     const key = ctx.match[1];
     const service = servicesService.getServiceByKey(key);
@@ -545,7 +612,7 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   bot.action(/service_field:(.+)/, async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
     const field = ctx.match[1];
     if (
@@ -567,7 +634,7 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   bot.action(/service_delete:(.+)/, async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
     const key = ctx.match[1];
     const service = servicesService.getServiceByKey(key);
@@ -584,14 +651,14 @@ function createBot({ config, sheetsService, calendarService }) {
   });
 
   bot.action("service_cancel", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
     delete ctx.session.servicesAction;
     await ctx.reply("Отменено.");
   });
 
   bot.action("admin:broadcast_confirm", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
     const act = ctx.session && ctx.session.adminAction;
     if (!act || act.type !== "broadcast") {
@@ -615,26 +682,43 @@ function createBot({ config, sheetsService, calendarService }) {
     );
     const ok = results.filter((r) => r.ok).length;
     const fail = results.length - ok;
+
+    // Логирование критичного действия (массовая рассылка)
+    logCriticalAction(
+      ctx.from.id,
+      "admin_broadcast",
+      {
+        recipientsCount: recipients.length,
+        sentCount: ok,
+        failedCount: fail,
+        payloadKind: act.payload?.kind || "text",
+      },
+      ok > 0 ? "success" : "failed"
+    );
+
+    // Планирование резервного копирования (с дебаунсингом)
+    scheduleBackup();
+
     await ctx.reply(`Рассылка завершена. Отправлено: ${ok}. Ошибок: ${fail}.`);
     delete ctx.session.adminAction;
   });
 
   bot.action("admin:broadcast_cancel", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
     delete ctx.session.adminAction;
     await ctx.reply("Рассылка отменена.");
   });
 
   bot.command("admin_cancel", async (ctx) => {
-    if (!isManager(ctx)) return;
+    if (!isAdmin(ctx)) return;
     delete ctx.session.adminAction;
     delete ctx.session.servicesAction;
     await ctx.reply("Действие админа отменено.");
   });
 
   bot.on("text", async (ctx, next) => {
-    if (!isManager(ctx) || !(ctx.session && ctx.session.mode === "admin"))
+    if (!isAdmin(ctx) || !(ctx.session && ctx.session.mode === "admin"))
       return next();
 
     // Обработка управления услугами
@@ -821,6 +905,13 @@ function createBot({ config, sheetsService, calendarService }) {
 
     if (action === "cancel_booking") {
       const id = text;
+
+      // Валидация ID записи
+      if (!validateAppointmentId(id)) {
+        await ctx.reply("Неверный формат ID записи. /admin_cancel для отмены.");
+        return;
+      }
+
       const appointment = await sheetsService.getAppointmentById(id);
       if (!appointment) {
         await ctx.reply("Запись не найдена. /admin_cancel для отмены.");
@@ -834,8 +925,26 @@ function createBot({ config, sheetsService, calendarService }) {
       );
       if (!ok) {
         await ctx.reply("Не удалось отменить запись.");
+        logAdminAction(
+          ctx.from.id,
+          "admin_cancel_booking",
+          { appointmentId: id },
+          "failed"
+        );
       } else {
         await ctx.reply(`Запись ${id} отменена.`);
+        // Логирование критичного действия (админ отменил запись)
+        logCriticalAction(
+          ctx.from.id,
+          "admin_cancel_booking",
+          {
+            appointmentId: id,
+            clientTelegramId: appointment.telegramId,
+            date: appointment.date,
+            time: appointment.timeStart,
+          },
+          "success"
+        );
         try {
           if (calendarService && calendarService.deleteEventForAppointmentId) {
             await calendarService.deleteEventForAppointmentId(id);
@@ -846,6 +955,77 @@ function createBot({ config, sheetsService, calendarService }) {
             e.message || e
           );
         }
+        if (appointment.telegramId) {
+          try {
+            await ctx.telegram.sendMessage(
+              String(appointment.telegramId),
+              `Ваша запись на ${formatDate(appointment.date)} ${
+                appointment.timeStart
+              } отменена менеджером.`
+            );
+          } catch (e) {}
+        }
+      }
+      delete ctx.session.adminAction;
+      return;
+    }
+
+    if (action === "cancel_booking_by_code") {
+      const cancelCode = text.toUpperCase().trim();
+
+      // Валидация кода отмены (должен быть 6 символов, буквы и цифры)
+      if (
+        !cancelCode ||
+        cancelCode.length !== 6 ||
+        !/^[A-Z0-9]+$/.test(cancelCode)
+      ) {
+        await ctx.reply(
+          "Неверный формат кода отмены. Код должен состоять из 6 символов (буквы и цифры). /admin_cancel для отмены."
+        );
+        return;
+      }
+
+      const result = await bookingService.cancelAppointmentByCode(cancelCode);
+
+      if (!result.ok) {
+        if (result.reason === "appointment_not_found") {
+          await ctx.reply(
+            "Запись с таким кодом отмены не найдена. /admin_cancel для отмены."
+          );
+        } else if (result.reason === "already_cancelled") {
+          await ctx.reply("Эта запись уже отменена. /admin_cancel для отмены.");
+        } else {
+          await ctx.reply(
+            "Не удалось отменить запись. /admin_cancel для отмены."
+          );
+        }
+        logAdminAction(
+          ctx.from.id,
+          "admin_cancel_booking_by_code",
+          { cancelCode, reason: result.reason },
+          "failed"
+        );
+      } else {
+        const appointment = result.appointment;
+        await ctx.reply(
+          `Запись отменена по коду ${cancelCode}.\n` +
+            `ID: ${appointment.id}\n` +
+            `Клиент: ${appointment.clientName}\n` +
+            `Дата: ${formatDate(appointment.date)} ${appointment.timeStart}`
+        );
+        // Логирование критичного действия (админ отменил запись по коду)
+        logCriticalAction(
+          ctx.from.id,
+          "admin_cancel_booking_by_code",
+          {
+            appointmentId: appointment.id,
+            cancelCode,
+            clientTelegramId: appointment.telegramId,
+            date: appointment.date,
+            time: appointment.timeStart,
+          },
+          "success"
+        );
         if (appointment.telegramId) {
           try {
             await ctx.telegram.sendMessage(
@@ -873,11 +1053,28 @@ function createBot({ config, sheetsService, calendarService }) {
       } else {
         telegramId = target;
       }
-      if (!telegramId) {
-        await ctx.reply("Пользователь не найден. /admin_cancel для отмены.");
+
+      // Валидация Telegram ID
+      if (!telegramId || !validateTelegramId(telegramId)) {
+        await ctx.reply(
+          "Неверный формат Telegram ID. /admin_cancel для отмены."
+        );
         return;
       }
+
       await adminService.banUser(telegramId, "", sheetsService);
+      // Логирование критичного действия (бан пользователя)
+      logCriticalAction(
+        ctx.from.id,
+        "admin_ban_user",
+        {
+          bannedUserId: telegramId,
+          target: text,
+        },
+        "success"
+      );
+      // Планирование резервного копирования (с дебаунсингом)
+      scheduleBackup();
       await ctx.reply(`Пользователь ${telegramId} забанен.`);
       delete ctx.session.adminAction;
       return;
@@ -885,11 +1082,27 @@ function createBot({ config, sheetsService, calendarService }) {
 
     if (action === "unban") {
       const telegramId = text;
-      if (!telegramId) {
-        await ctx.reply("Укажите Telegram ID. /admin_cancel для отмены.");
+
+      // Валидация Telegram ID
+      if (!telegramId || !validateTelegramId(telegramId)) {
+        await ctx.reply(
+          "Неверный формат Telegram ID. /admin_cancel для отмены."
+        );
         return;
       }
+
       await adminService.unbanUser(telegramId, sheetsService);
+      // Логирование критичного действия (разбан пользователя)
+      logCriticalAction(
+        ctx.from.id,
+        "admin_unban_user",
+        {
+          unbannedUserId: telegramId,
+        },
+        "success"
+      );
+      // Планирование резервного копирования (с дебаунсингом)
+      scheduleBackup();
       await ctx.reply(`Пользователь ${telegramId} разбанен.`);
       delete ctx.session.adminAction;
       return;
@@ -899,6 +1112,13 @@ function createBot({ config, sheetsService, calendarService }) {
       const message = text;
       if (!message) {
         await ctx.reply("Текст пуст. /admin_cancel для отмены.");
+        return;
+      }
+
+      // Санитизация текста рассылки (максимум 4000 символов для Telegram)
+      const sanitizedMessage = sanitizeText(message, 4000);
+      if (sanitizedMessage.length === 0) {
+        await ctx.reply("Текст после очистки пуст. /admin_cancel для отмены.");
         return;
       }
 
@@ -917,9 +1137,19 @@ function createBot({ config, sheetsService, calendarService }) {
         return;
       }
 
+      // Проверка максимального количества получателей (1000)
+      const MAX_RECIPIENTS = 1000;
+      if (recipients.length > MAX_RECIPIENTS) {
+        await ctx.reply(
+          `Превышен лимит получателей: ${recipients.length} (максимум ${MAX_RECIPIENTS}). Ограничьте список получателей.`
+        );
+        delete ctx.session.adminAction;
+        return;
+      }
+
       ctx.session.adminAction = {
         type: "broadcast",
-        payload: { kind: "text", text: message },
+        payload: { kind: "text", text: sanitizedMessage },
         recipients,
       };
 
@@ -947,7 +1177,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
   // Приём фото от админа для массовой рассылки
   bot.on("photo", async (ctx, next) => {
-    if (!isManager(ctx) || !(ctx.session && ctx.session.mode === "admin"))
+    if (!isAdmin(ctx) || !(ctx.session && ctx.session.mode === "admin"))
       return next();
     const action =
       ctx.session && ctx.session.adminAction && ctx.session.adminAction.type;

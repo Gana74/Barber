@@ -73,6 +73,8 @@ async function broadcastToClients(bot, sheetsService, payload, options = 200) {
   // Поддерживаем два режима: передан список получателей или отправка всем клиентам
   // Если передан опциональный параметр `options.recipients` - используем его (массив telegramId строк).
   // options: { recipients: string[] | null, throttleMs: number, skipBanned: boolean }
+  const MAX_RECIPIENTS = 1000; // Максимальное количество получателей
+  
   const clientsAll = await sheetsService.getAllClients();
   const results = [];
 
@@ -99,6 +101,13 @@ async function broadcastToClients(bot, sheetsService, payload, options = 200) {
     clientsAll.forEach((c) => {
       if (c && c.telegramId) targets.push({ telegramId: String(c.telegramId) });
     });
+  }
+
+  // Ограничение максимального количества получателей
+  if (targets.length > MAX_RECIPIENTS) {
+    throw new Error(
+      `Превышен лимит получателей: ${targets.length} (максимум ${MAX_RECIPIENTS})`
+    );
   }
 
   for (const c of targets) {

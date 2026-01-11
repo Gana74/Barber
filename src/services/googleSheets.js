@@ -773,6 +773,61 @@ async function createSheetsService(config) {
     };
   }
 
+  async function getAppointmentByCancelCode(cancelCode) {
+    // Комментарий: ищем запись по коду отмены
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+    });
+    const rows = res.data.values || [];
+
+    // Код отмены находится в колонке с индексом 11
+    const row = rows.find(
+      (r) =>
+        r[11] &&
+        String(r[11]).toUpperCase() === String(cancelCode).toUpperCase()
+    );
+    if (!row) return null;
+
+    const [
+      ID_записи,
+      Создано_UTC,
+      Услуга,
+      Дата,
+      Время_начала,
+      Время_окончания,
+      Имя_клиента,
+      Телефон,
+      Username_Telegram,
+      Комментарий,
+      Статус,
+      Код_отмены,
+      Telegram_ID,
+      Chat_ID,
+      Исполнено_UTC,
+      Отменено_UTC,
+    ] = row;
+
+    return {
+      id: ID_записи,
+      createdAtUtc: Создано_UTC,
+      service: Услуга,
+      date: Дата,
+      timeStart: Время_начала,
+      timeEnd: Время_окончания,
+      clientName: Имя_клиента,
+      phone: Телефон,
+      username: Username_Telegram,
+      comment: Комментарий,
+      status: Статус,
+      cancelCode: Код_отмены,
+      telegramId: Telegram_ID,
+      chatId: Chat_ID,
+      completedAtUtc: Исполнено_UTC,
+      cancelledAtUtc: Отменено_UTC,
+    };
+  }
+
   async function getAllClients() {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
@@ -1131,6 +1186,7 @@ async function createSheetsService(config) {
     getAppointmentsByDate,
     getAllActiveAppointments,
     getAppointmentById,
+    getAppointmentByCancelCode,
     getAllClients,
     getWorkHoursForDate,
     invalidateWorkHoursCache,

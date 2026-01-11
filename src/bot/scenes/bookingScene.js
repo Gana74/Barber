@@ -6,6 +6,8 @@ const timezonePlugin = require("dayjs/plugin/timezone");
 
 dayjs.extend(timezonePlugin);
 const { formatDate } = require("../../utils/formatDate");
+const { validateName, sanitizeText } = require("../../utils/security");
+const { logAction } = require("../../utils/logger");
 
 function formatDateLabel(d) {
   return d.format("DD.MM (dd)");
@@ -370,6 +372,56 @@ function createBookingScene({ bookingService, sheetsService, config }) {
     async (ctx) => {
       const booking = ctx.wizard.state.booking;
 
+      // Обработка callback_query (если пользователь нажал на кнопку времени)
+      if ("callback_query" in ctx.update) {
+        const data = ctx.update.callback_query.data;
+        
+        // Если пользователь выбрал другое время, возвращаемся к шагу выбора времени
+        if (data && data.startsWith("time:")) {
+          const timeStr = data.slice("time:".length);
+          ctx.wizard.state.booking.timeStr = timeStr;
+          await ctx.answerCbQuery();
+          await ctx.reply(
+            "Введи, пожалуйста, своё имя (можно оставить как в профиле), затем отправь свой контакт по кнопке ниже."
+          );
+          ctx.wizard.state.booking.step = "name";
+          return; // Остаемся на том же шаге
+        }
+        
+        // Обработка кнопки "Назад" к выбору времени
+        if (data === "back_to_dates") {
+          delete ctx.wizard.state.booking.timeStr;
+          await ctx.answerCbQuery("Возвращаемся к выбору времени");
+          
+          const { serviceKey, dateStr } = ctx.wizard.state.booking;
+          const { slots } = await bookingService.getAvailableSlotsForService(
+            serviceKey,
+            dateStr
+          );
+          
+          const keyboard = [];
+          let row = [];
+          slots.forEach((slot, idx) => {
+            row.push(
+              Markup.button.callback(slot.timeStr, `time:${slot.timeStr}`)
+            );
+            if ((idx + 1) % 4 === 0) {
+              keyboard.push(row);
+              row = [];
+            }
+          });
+          if (row.length) keyboard.push(row);
+          keyboard.push([Markup.button.callback("Назад ⬅️", "back_to_dates")]);
+          
+          await ctx.reply("Выбери время:", Markup.inlineKeyboard(keyboard));
+          return ctx.wizard.selectStep(3); // Возвращаемся к шагу выбора времени
+        }
+        
+        // Для других callback_query просто отвечаем и игнорируем
+        await ctx.answerCbQuery();
+        return;
+      }
+
       // Обработка отправки контакта
       if (ctx.message && ctx.message.contact) {
         if (booking.step === "contact") {
@@ -384,7 +436,24 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       }
 
       if (booking.step === "name") {
-        booking.name = ctx.message.text.trim();
+        // Проверяем, что это текстовое сообщение
+        if (!ctx.message || !ctx.message.text) {
+          await ctx.reply("Пожалуйста, введите своё имя текстом.");
+          return;
+        }
+        
+        const nameInput = ctx.message.text.trim();
+        
+        // Валидация имени: длина 1-50 символов
+        if (!validateName(nameInput, 1, 50)) {
+          await ctx.reply(
+            "Имя должно содержать от 1 до 50 символов и состоять только из букв, пробелов, дефисов и апострофов. Попробуйте снова."
+          );
+          return;
+        }
+        
+        // Санитизация имени
+        booking.name = sanitizeText(nameInput, 50);
         booking.step = "contact";
         await ctx.reply(
           "Теперь отправь свой контакт по кнопке ниже:",
@@ -398,8 +467,28 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       }
 
       if (booking.step === "comment") {
-        const comment = ctx.message.text.trim();
-        booking.comment = comment === "-" ? "" : comment;
+        // Проверяем, что это текстовое сообщение
+        if (!ctx.message || !ctx.message.text) {
+          await ctx.reply('Пожалуйста, введите комментарий текстом или напишите "-" для пропуска.');
+          return;
+        }
+        
+        const commentInput = ctx.message.text.trim();
+        
+        // Обработка пустого комментария
+        if (commentInput === "-") {
+          booking.comment = "";
+        } else {
+          // Валидация и санитизация комментария (максимум 200 символов)
+          const sanitizedComment = sanitizeText(commentInput, 200);
+          if (sanitizedComment.length === 0 && commentInput.length > 0) {
+            await ctx.reply(
+              "Комментарий содержит недопустимые символы. Попробуйте снова или напишите '-' для пропуска."
+            );
+            return;
+          }
+          booking.comment = sanitizedComment;
+        }
 
         const { serviceKey, dateStr, timeStr, name, phone } = booking;
         const service = bookingService.getServiceByKey(serviceKey);
@@ -476,6 +565,14 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       });
 
       if (!result.ok) {
+        // Логирование неудачной попытки создания записи
+        logAction(ctx.from.id, "appointment_creation_failed", {
+          reason: result.reason,
+          serviceKey,
+          dateStr,
+          timeStr,
+        }, "failed");
+        
         if (result.reason === "limit_exceeded") {
           await ctx.reply(
             "Нельзя создать запись: превышен лимит — не более 3 записей в день от одного пользователя. Отмените ненужные записи или свяжитесь с администрацией."
@@ -544,6 +641,15 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       }
 
       const { appointment } = result;
+
+      // Логирование успешного создания записи
+      logAction(ctx.from.id, "appointment_created", {
+        appointmentId: appointment.id,
+        service: appointment.service,
+        date: appointment.date,
+        timeStart: appointment.timeStart,
+        timeEnd: appointment.timeEnd,
+      }, "success");
 
       const confirmation = [
         "Готово! Ты записан(а) в барбершоп 👌",
