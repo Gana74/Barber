@@ -81,6 +81,8 @@ function createBot({ config, sheetsService, calendarService }) {
       { command: "start", description: "Начать общение с начала" },
       { command: "book", description: "Записаться на стрижку" },
       { command: "services", description: "Посмотреть список услуг" },
+      { command: "admin", description: "Режим администратора" },
+      { command: "user", description: "Режим пользователя" },
     ])
     .catch((err) => {
       console.warn("Failed to set bot commands menu:", err.message);

@@ -22,5 +22,11 @@
     "name": "Женская стрижка",
     "price": null,
     "durationMin": 60
+  },
+  "COMPLEXS": {
+    "key": "COMPLEXS",
+    "name": "Комплекс (мужская стрижка + оформление бороды)",
+    "price": 2300,
+    "durationMin": 90
   }
 }

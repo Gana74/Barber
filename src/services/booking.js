@@ -311,6 +311,15 @@ function createBookingService({ sheetsService, config, calendarService }) {
       lastAppointmentAtUtc: createdAtUtc,
     });
 
+    // Очищаем флаг отправки 21-дневного напоминания при новой записи
+    if (client.telegramId && sheetsService.clear21DayReminderSentAt) {
+      try {
+        await sheetsService.clear21DayReminderSentAt(client.telegramId);
+      } catch (e) {
+        // не блокируем при ошибке очистки
+      }
+    }
+
     // Попытка создать событие в Google Calendar (опционально)
     try {
       if (calendarService && calendarService.createEventForAppointment) {

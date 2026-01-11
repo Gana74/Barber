@@ -1084,6 +1084,41 @@ async function createSheetsService(config) {
     return true;
   }
 
+  async function clear21DayReminderSentAt(telegramId) {
+    // Комментарий: очищаем поле напоминания при создании новой записи
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.CLIENTS}!A2:K2000`,
+    });
+    const rows = res.data.values || [];
+
+    let targetRowIndex = -1;
+    rows.forEach((row, idx) => {
+      const existingTelegramId = row[2];
+      if (String(existingTelegramId) === String(telegramId)) {
+        targetRowIndex = idx;
+      }
+    });
+
+    if (targetRowIndex === -1) {
+      return false;
+    }
+
+    const rowNumber = targetRowIndex + 2;
+
+    // Очищаем столбец K (индекс 10) - Напоминание_21день_UTC
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.CLIENTS}!K${rowNumber}`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[""]],
+      },
+    });
+
+    return true;
+  }
+
   return {
     ensureSheetsStructure,
     getSettings,
@@ -1105,6 +1140,7 @@ async function createSheetsService(config) {
     getAllAppointmentsForClient,
     getClientsFor21DayReminder,
     mark21DayReminderSent,
+    clear21DayReminderSentAt,
   };
 }
 
