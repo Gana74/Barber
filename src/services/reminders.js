@@ -397,12 +397,16 @@ function setupReminders({
         let sentCount = 0;
         let errorCount = 0;
 
+        // Получаем текст сообщения из настроек
+        const messageTemplate = await sheetsService.get21DayReminderMessage();
+
         for (const client of clientsForReminder) {
           if (!client.telegramId) continue;
 
           const clientName = client.name || client.username || "друг";
 
-          const msg = `Привет, ${clientName}! Тебя давно небыло на стрижке, пора подстричься!`;
+          // Заменяем плейсхолдер {clientName} на реальное имя
+          const msg = messageTemplate.replace(/{clientName}/g, clientName);
 
           try {
             await bot.telegram.sendMessage(client.telegramId, msg, {

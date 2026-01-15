@@ -144,6 +144,15 @@ pm2 logs barber-bot
 - `bookAppointment({ serviceKey, dateStr, timeStr, client, comment })` — создаёт запись
 - `cancelAppointment(id, telegramId)` — отменяет запись (проверка владельца)
 
+**Ограничение записей:**
+
+- Система ограничивает количество активных записей для одного пользователя: **не более 3 активных записей на любые даты**
+- Проверка выполняется в `bookAppointment()` перед созданием записи
+- Используется `getAllActiveAppointments()` для получения всех активных записей
+- Пользователь идентифицируется по `telegramId`, `chatId` или `phone` (проверяются все доступные идентификаторы)
+- При превышении лимита возвращается `{ ok: false, reason: "limit_exceeded", existingCount, existingAppointments }`
+- Сообщение об ошибке отображается в сцене бронирования (`bookingScene.js`)
+
 **Логика генерации слотов:**
 
 - Шаг 15 минут

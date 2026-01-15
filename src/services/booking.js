@@ -248,32 +248,56 @@ function createBookingService({ sheetsService, config, calendarService }) {
       return { ok: false, reason: "slot_taken" };
     }
 
-    // Защита от спама: не более 3 активных записей в день от одного пользователя
+    // Защита от спама: не более 3 активных записей от одного пользователя (на любые даты)
     try {
-      const dayAppointments = await sheetsService.getAppointmentsByDate(
-        dateStr
-      );
+      // Получаем все активные записи
+      const allActiveAppointments =
+        await sheetsService.getAllActiveAppointments();
 
-      const ownerKey =
-        client.telegramId || client.chatId || client.phone || null;
-      if (ownerKey) {
-        const sameUserCount = dayAppointments.filter((a) => {
-          if (a.status !== STATUSES.ACTIVE) return false;
-          if (client.telegramId && a.telegramId)
-            return String(a.telegramId) === String(client.telegramId);
-          if (client.chatId && a.chatId)
-            return String(a.chatId) === String(client.chatId);
-          if (client.phone && a.phone)
-            return String(a.phone) === String(client.phone);
-          return false;
-        }).length;
+      // Функция для нормализации телефона
+      const normalizePhone = (phone) => {
+        return String(phone)
+          .replace(/[\s\-\(\)]/g, "")
+          .replace(/^\+/, "")
+          .trim();
+      };
 
-        if (sameUserCount >= 3) {
-          return { ok: false, reason: "limit_exceeded" };
+      // Проверяем записи пользователя по любому из доступных идентификаторов
+      const sameUserAppointments = allActiveAppointments.filter((a) => {
+        // Проверяем совпадение по telegramId (приоритетный идентификатор)
+        if (client.telegramId && a.telegramId) {
+          const clientTgId = String(client.telegramId).trim();
+          const appointmentTgId = String(a.telegramId).trim();
+          if (clientTgId && appointmentTgId && clientTgId === appointmentTgId) {
+            return true;
+          }
         }
+        // Проверяем совпадение по phone (если telegramId не совпал)
+        if (client.phone && a.phone) {
+          const normalizedClientPhone = normalizePhone(client.phone);
+          const normalizedAppointmentPhone = normalizePhone(a.phone);
+          if (
+            normalizedClientPhone &&
+            normalizedAppointmentPhone &&
+            normalizedClientPhone === normalizedAppointmentPhone
+          ) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (sameUserAppointments.length >= 3) {
+        return {
+          ok: false,
+          reason: "limit_exceeded",
+          existingCount: sameUserAppointments.length,
+          existingAppointments: sameUserAppointments,
+        };
       }
     } catch (e) {
-      // Если проверка не удалась, не блокируем создание записи — логируем молча
+      // Если проверка не удалась, не блокируем создание записи — логируем ошибку
+      console.error("Ошибка при проверке лимита записей:", e.message || e);
     }
 
     const start = dayjs.tz(`${dateStr}T${timeStr}:00`, timezone);
@@ -287,6 +311,7 @@ function createBookingService({ sheetsService, config, calendarService }) {
       id,
       createdAtUtc,
       service: service.name,
+      price: service.price || null,
       date: dateStr,
       timeStart: start.format("HH:mm"),
       timeEnd: end.format("HH:mm"),
@@ -297,7 +322,6 @@ function createBookingService({ sheetsService, config, calendarService }) {
       status: STATUSES.ACTIVE,
       cancelCode,
       telegramId: client.telegramId,
-      chatId: client.chatId,
     };
 
     await sheetsService.appendAppointment(appointment);
@@ -429,7 +453,9 @@ function createBookingService({ sheetsService, config, calendarService }) {
 
   async function cancelAppointmentByCode(cancelCode) {
     // Комментарий: отмена записи по коду отмены (для админа, без проверки владельца)
-    const appointment = await sheetsService.getAppointmentByCancelCode(cancelCode);
+    const appointment = await sheetsService.getAppointmentByCancelCode(
+      cancelCode
+    );
 
     if (!appointment) {
       return { ok: false, reason: "appointment_not_found" };

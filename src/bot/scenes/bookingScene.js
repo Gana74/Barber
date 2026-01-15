@@ -561,7 +561,6 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           phone: booking.phone,
           username: ctx.from.username,
           telegramId: ctx.from.id,
-          chatId: ctx.chat.id,
         },
         comment: booking.comment,
       });
@@ -581,8 +580,17 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         );
 
         if (result.reason === "limit_exceeded") {
+          const existingCount = result.existingCount || 3;
           await ctx.reply(
-            "Нельзя создать запись: превышен лимит — не более 3 записей в день от одного пользователя. Отмените ненужные записи или свяжитесь с администрацией."
+            `❌ Нельзя создать запись: превышен лимит!\n\n` +
+              `У вас уже ${existingCount} активных записей.\n` +
+              `Ограничение: не более 3 активных записей от одного пользователя.\n\n` +
+              `Пожалуйста, отмените ненужные записи через "Мои записи" или свяжитесь с администрацией.`,
+            Markup.removeKeyboard()
+          );
+          await ctx.reply(
+            "Вы вернулись в главное меню.",
+            Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize()
           );
           return ctx.scene.leave();
         }
@@ -664,7 +672,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       );
 
       const confirmation = [
-        "Готово! Ты записан(а) в барбершоп 👌",
+        "Готово! Ты записан(а)👌",
         `Услуга: ${appointment.service}`,
         `Дата: ${formatDate(appointment.date)}`,
         `Время: ${appointment.timeStart}–${appointment.timeEnd}`,

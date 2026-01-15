@@ -14,13 +14,13 @@
   "BUZZCUT": {
     "key": "BUZZCUT",
     "name": "Стрижка под машинку",
-    "price": null,
+    "price": 800,
     "durationMin": 30
   },
   "WOMEN_HAIRCUT": {
     "key": "WOMEN_HAIRCUT",
     "name": "Женская стрижка",
-    "price": null,
+    "price": 1500,
     "durationMin": 60
   },
   "COMPLEXS": {

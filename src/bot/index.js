@@ -23,6 +23,13 @@ const {
   logAction,
 } = require("../utils/logger");
 const { scheduleBackup } = require("../utils/backup");
+const dayjs = require("dayjs");
+const timezonePlugin = require("dayjs/plugin/timezone");
+const utc = require("dayjs/plugin/utc");
+const revenueStats = require("../services/revenueStats");
+
+dayjs.extend(timezonePlugin);
+dayjs.extend(utc);
 
 function createBot({ config, sheetsService, calendarService }) {
   const bot = new Telegraf(config.botToken);
@@ -316,6 +323,8 @@ function createBot({ config, sheetsService, calendarService }) {
     ["Забанить пользователя", "Разбанить пользователя"],
     ["Массовая рассылка"],
     ["Управление услугами"],
+    ["Редактировать напоминание 21 день"],
+    ["📊 Финансовая статистика"],
     ["Вернуться в пользовательский режим"],
   ]).resize();
 
@@ -390,6 +399,7 @@ function createBot({ config, sheetsService, calendarService }) {
       "ban",
       "unban",
       "broadcast",
+      "edit_21day_reminder",
     ]);
 
     if (inputActions.has(action)) {
@@ -401,7 +411,11 @@ function createBot({ config, sheetsService, calendarService }) {
           ? "Отправьте код отмены записи (например: A3K9X2). Для отмены напишите /admin_cancel"
           : action === "ban"
           ? "Отправьте Telegram ID или @username пользователя для бана. Для отмены напишите /admin_cancel"
-          : "Отправьте Telegram ID пользователя для разбанивания. Для отмены напишите /admin_cancel"
+          : action === "unban"
+          ? "Отправьте Telegram ID пользователя для разбанивания. Для отмены напишите /admin_cancel"
+          : action === "edit_21day_reminder"
+          ? "Отправьте новый текст для напоминания через 21 день. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel"
+          : "Неизвестное действие"
       );
       return;
     }
@@ -459,6 +473,24 @@ function createBot({ config, sheetsService, calendarService }) {
     }
   });
 
+  bot.hears("Редактировать напоминание 21 день", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      // Показываем текущее сообщение
+      try {
+        const currentMessage = await sheetsService.get21DayReminderMessage();
+        await ctx.reply(
+          `Текущий текст напоминания:\n\n${currentMessage}\n\nОтправьте новый текст. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel`
+        );
+        await handleAdminAction(ctx, "edit_21day_reminder");
+      } catch (err) {
+        await ctx.reply(
+          `Ошибка при получении текущего сообщения: ${err.message}`
+        );
+      }
+    }
+  });
+
   bot.hears("Вернуться в пользовательский режим", async (ctx) => {
     if (!isAdmin(ctx)) return;
     ctx.session = ctx.session || {};
@@ -469,6 +501,126 @@ function createBot({ config, sheetsService, calendarService }) {
         .resize()
         .oneTime()
     );
+  });
+
+  // --- Финансовая статистика ---
+  bot.hears("📊 Финансовая статистика", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback("Сегодня", "revenue:today")],
+        [Markup.button.callback("Вчера", "revenue:yesterday")],
+        [Markup.button.callback("Эта неделя", "revenue:this_week")],
+        [Markup.button.callback("Прошлая неделя", "revenue:last_week")],
+        [Markup.button.callback("Этот месяц", "revenue:this_month")],
+        [Markup.button.callback("Прошлый месяц", "revenue:last_month")],
+        [Markup.button.callback("По услугам", "revenue:by_services")],
+        [Markup.button.callback("Назад в админ-меню", "revenue:back")],
+      ]);
+
+      await ctx.reply("Выберите период для просмотра статистики:", keyboard);
+    }
+  });
+
+  bot.action(/revenue:(.+)/, async (ctx) => {
+    if (!isAdmin(ctx)) {
+      await ctx.answerCbQuery("Доступ запрещен");
+      return;
+    }
+
+    const period = ctx.match[1];
+    await ctx.answerCbQuery();
+
+    if (period === "back") {
+      await ctx.reply(
+        "Включён режим администратора. Выберите действие:",
+        adminKeyboard
+      );
+      return;
+    }
+
+    try {
+      const timezone = await sheetsService.getTimezone();
+      let startDate = null;
+      let endDate = null;
+      let periodLabel = "";
+
+      const now = dayjs().tz(timezone);
+
+      switch (period) {
+        case "today":
+          startDate = now.startOf("day").format("YYYY-MM-DD");
+          endDate = now.endOf("day").format("YYYY-MM-DD");
+          periodLabel = formatDate(startDate);
+          break;
+
+        case "yesterday":
+          const yesterday = now.subtract(1, "day");
+          startDate = yesterday.startOf("day").format("YYYY-MM-DD");
+          endDate = yesterday.endOf("day").format("YYYY-MM-DD");
+          periodLabel = formatDate(startDate);
+          break;
+
+        case "this_week":
+          // Понедельник текущей недели до сегодня
+          const monday = now.startOf("week").add(1, "day"); // dayjs считает воскресенье первым днем
+          startDate = monday.format("YYYY-MM-DD");
+          endDate = now.format("YYYY-MM-DD");
+          periodLabel = `с ${formatDate(startDate)} по ${formatDate(endDate)}`;
+          break;
+
+        case "last_week":
+          // Понедельник прошлой недели до воскресенья прошлой недели
+          const lastMonday = now
+            .subtract(1, "week")
+            .startOf("week")
+            .add(1, "day");
+          const lastSunday = lastMonday.add(6, "day");
+          startDate = lastMonday.format("YYYY-MM-DD");
+          endDate = lastSunday.format("YYYY-MM-DD");
+          periodLabel = `с ${formatDate(startDate)} по ${formatDate(endDate)}`;
+          break;
+
+        case "this_month":
+          startDate = now.startOf("month").format("YYYY-MM-DD");
+          endDate = now.format("YYYY-MM-DD");
+          periodLabel = `${now.format("MMMM YYYY")} (по ${formatDate(endDate)})`;
+          break;
+
+        case "last_month":
+          const lastMonth = now.subtract(1, "month");
+          startDate = lastMonth.startOf("month").format("YYYY-MM-DD");
+          endDate = lastMonth.endOf("month").format("YYYY-MM-DD");
+          periodLabel = lastMonth.format("MMMM YYYY");
+          break;
+
+        case "by_services":
+          // Все завершенные записи без фильтра по дате
+          startDate = null;
+          endDate = null;
+          periodLabel = "все время";
+          break;
+
+        default:
+          await ctx.reply("Неизвестный период.");
+          return;
+      }
+
+      const appointments = await sheetsService.getCompletedAppointments({
+        startDate,
+        endDate,
+      });
+
+      const stats = revenueStats.calculateRevenueStats(appointments);
+      const formatted = revenueStats.formatRevenueStats(stats, periodLabel);
+
+      await ctx.reply(formatted);
+    } catch (error) {
+      console.error("Ошибка при получении статистики доходов:", error);
+      await ctx.reply(
+        `Ошибка при получении статистики: ${error.message || "Неизвестная ошибка"}`
+      );
+    }
   });
 
   // --- Управление услугами ---
@@ -1027,6 +1179,51 @@ function createBot({ config, sheetsService, calendarService }) {
       // Планирование резервного копирования (с дебаунсингом)
       scheduleBackup();
       await ctx.reply(`Пользователь ${telegramId} разбанен.`);
+      delete ctx.session.adminAction;
+      return;
+    }
+
+    if (action === "edit_21day_reminder") {
+      const message = text;
+      if (!message || message.trim().length === 0) {
+        await ctx.reply("Текст не может быть пустым. /admin_cancel для отмены.");
+        return;
+      }
+
+      // Санитизация текста (максимум 2000 символов для напоминания)
+      const sanitizedMessage = sanitizeText(message, 2000);
+      if (sanitizedMessage.length === 0) {
+        await ctx.reply("Текст после очистки пуст. /admin_cancel для отмены.");
+        return;
+      }
+
+      try {
+        await sheetsService.set21DayReminderMessage(sanitizedMessage);
+        
+        // Логирование действия админа
+        logAdminAction(
+          ctx.from.id,
+          "admin_edit_21day_reminder",
+          { messageLength: sanitizedMessage.length },
+          "success"
+        );
+
+        await ctx.reply(
+          `Текст напоминания через 21 день успешно обновлен!\n\nНовый текст:\n${sanitizedMessage}`
+        );
+      } catch (err) {
+        await ctx.reply(
+          `Ошибка при сохранении текста: ${err.message}\n/admin_cancel для отмены.`
+        );
+        logError(
+          ctx.from.id,
+          "admin_edit_21day_reminder",
+          { error: err.message },
+          "error"
+        );
+        return;
+      }
+
       delete ctx.session.adminAction;
       return;
     }

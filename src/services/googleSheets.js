@@ -31,6 +31,7 @@ const HEADERS = {
     "ID_записи",
     "Создано_UTC",
     "Услуга",
+    "Цена",
     "Дата",
     "Время_начала",
     "Время_окончания",
@@ -41,7 +42,6 @@ const HEADERS = {
     "Статус",
     "Код_отмены",
     "Telegram_ID",
-    "Chat_ID",
     "Исполнено_UTC",
     "Отменено_UTC",
   ],
@@ -231,6 +231,66 @@ async function createSheetsService(config) {
     const settings = await getSettings();
     return settings.таймзона || config.defaultTimezone;
   }
+
+  async function get21DayReminderMessage() {
+    const settings = await getSettings();
+    return (
+      settings.напоминание_21день_текст ||
+      "Привет, {clientName}! Тебя давно небыло на стрижке, пора подстричься!"
+    );
+  }
+
+  async function set21DayReminderMessage(message) {
+    if (
+      !message ||
+      typeof message !== "string" ||
+      message.trim().length === 0
+    ) {
+      throw new Error("Сообщение не может быть пустым");
+    }
+
+    // Получаем все настройки
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.SETTINGS}!A2:B100`,
+    });
+
+    const rows = res.data.values || [];
+    let found = false;
+    let rowIndex = -1;
+
+    // Ищем существующую запись
+    for (let i = 0; i < rows.length; i++) {
+      const [key] = rows[i];
+      if (key === "напоминание_21день_текст") {
+        found = true;
+        rowIndex = i + 2; // +2 потому что A1 - заголовок, A2 - первая строка данных
+        break;
+      }
+    }
+
+    if (found) {
+      // Обновляем существующую запись
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!B${rowIndex}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[message.trim()]] },
+      });
+    } else {
+      // Добавляем новую запись
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [["напоминание_21день_текст", message.trim()]] },
+      });
+    }
+
+    return true;
+  }
+
   async function ensureSheetsStructure() {
     const meta = await sheets.spreadsheets.get({
       spreadsheetId: config.google.sheetsId,
@@ -275,6 +335,23 @@ async function createSheetsService(config) {
         valueInputOption: "RAW",
         insertDataOption: "INSERT_ROWS",
         requestBody: { values: [["таймзона", config.defaultTimezone]] },
+      });
+    }
+    // Инициализируем дефолтное сообщение напоминания, если его нет
+    if (!settings.напоминание_21день_текст) {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: {
+          values: [
+            [
+              "напоминание_21день_текст",
+              "Привет, {clientName}! Тебя давно небыло на стрижке, пора подстричься!",
+            ],
+          ],
+        },
       });
     }
   }
@@ -333,6 +410,7 @@ async function createSheetsService(config) {
           ID_записи,
           Создано_UTC,
           Услуга,
+          Цена,
           Дата,
           Время_начала,
           Время_окончания,
@@ -343,7 +421,6 @@ async function createSheetsService(config) {
           Статус,
           Код_отмены,
           Telegram_ID,
-          Chat_ID,
           Исполнено_UTC,
           Отменено_UTC,
         ] = row;
@@ -351,6 +428,7 @@ async function createSheetsService(config) {
           id: ID_записи,
           createdAtUtc: Создано_UTC,
           service: Услуга,
+          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
           date: Дата,
           timeStart: Время_начала,
           timeEnd: Время_окончания,
@@ -361,7 +439,6 @@ async function createSheetsService(config) {
           status: Статус,
           cancelCode: Код_отмены,
           telegramId: Telegram_ID,
-          chatId: Chat_ID,
           completedAtUtc: Исполнено_UTC,
           cancelledAtUtc: Отменено_UTC,
         };
@@ -394,6 +471,7 @@ async function createSheetsService(config) {
       id,
       createdAtUtc,
       service,
+      price,
       date,
       timeStart,
       timeEnd,
@@ -404,7 +482,6 @@ async function createSheetsService(config) {
       status,
       cancelCode,
       telegramId,
-      chatId,
     } = appointment;
 
     await sheets.spreadsheets.values.append({
@@ -418,6 +495,7 @@ async function createSheetsService(config) {
             id,
             createdAtUtc,
             service,
+            price !== null && price !== undefined ? String(price) : "",
             date,
             timeStart,
             timeEnd,
@@ -428,7 +506,6 @@ async function createSheetsService(config) {
             status || "активна",
             cancelCode,
             String(telegramId || ""),
-            String(chatId || ""),
             "", // Исполнено_UTC - пусто при создании
             "", // Отменено_UTC
           ],
@@ -457,7 +534,7 @@ async function createSheetsService(config) {
     rows.forEach((row, idx) => {
       if (row[0] === id) {
         targetRowIndex = idx;
-        targetDate = row[3];
+        targetDate = row[4]; // Дата теперь в индексе 4 (после Цена)
       }
     });
 
@@ -468,8 +545,8 @@ async function createSheetsService(config) {
     const rowNumber = targetRowIndex + 2; // сдвиг из-за заголовков
 
     const rowValues = rows[targetRowIndex];
-    // Статус в колонке K (index 10), Исполнено_UTC в колонке O (index 14), Отменено_UTC в колонке P (index 15)
-    rowValues[10] = status;
+    // Статус в колонке L (index 11), Исполнено_UTC в колонке O (index 14), Отменено_UTC в колонке P (index 15)
+    rowValues[11] = status;
     if (status === "отменена" && cancelledAtUtc) {
       rowValues[15] = cancelledAtUtc;
     }
@@ -584,6 +661,7 @@ async function createSheetsService(config) {
           ID_записи,
           Создано_UTC,
           Услуга,
+          Цена,
           Дата,
           Время_начала,
           Время_окончания,
@@ -594,12 +672,12 @@ async function createSheetsService(config) {
           Статус,
           Код_отмены,
           Telegram_ID,
-          Chat_ID,
         ] = row;
         return {
           id: ID_записи,
           createdAtUtc: Создано_UTC,
           service: Услуга,
+          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
           date: Дата,
           timeStart: Время_начала,
           timeEnd: Время_окончания,
@@ -610,7 +688,6 @@ async function createSheetsService(config) {
           status: Статус,
           cancelCode: Код_отмены,
           telegramId: Telegram_ID,
-          chatId: Chat_ID,
         };
       })
       .filter(
@@ -639,6 +716,7 @@ async function createSheetsService(config) {
           ID_записи,
           Создано_UTC,
           Услуга,
+          Цена,
           Дата,
           Время_начала,
           Время_окончания,
@@ -649,12 +727,12 @@ async function createSheetsService(config) {
           Статус,
           Код_отмены,
           Telegram_ID,
-          Chat_ID,
         ] = row;
         return {
           id: ID_записи,
           createdAtUtc: Создано_UTC,
           service: Услуга,
+          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
           date: Дата,
           timeStart: Время_начала,
           timeEnd: Время_окончания,
@@ -665,7 +743,6 @@ async function createSheetsService(config) {
           status: Статус,
           cancelCode: Код_отмены,
           telegramId: Telegram_ID,
-          chatId: Chat_ID,
         };
       })
       .filter((row) => row.date === dateStr && row.status === "активна");
@@ -685,6 +762,7 @@ async function createSheetsService(config) {
           ID_записи,
           Создано_UTC,
           Услуга,
+          Цена,
           Дата,
           Время_начала,
           Время_окончания,
@@ -695,7 +773,6 @@ async function createSheetsService(config) {
           Статус,
           Код_отмены,
           Telegram_ID,
-          Chat_ID,
           Исполнено_UTC,
           Отменено_UTC,
         ] = row;
@@ -703,6 +780,7 @@ async function createSheetsService(config) {
           id: ID_записи,
           createdAtUtc: Создано_UTC,
           service: Услуга,
+          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
           date: Дата,
           timeStart: Время_начала,
           timeEnd: Время_окончания,
@@ -713,7 +791,6 @@ async function createSheetsService(config) {
           status: Статус,
           cancelCode: Код_отмены,
           telegramId: Telegram_ID,
-          chatId: Chat_ID,
           completedAtUtc: Исполнено_UTC,
           cancelledAtUtc: Отменено_UTC,
         };
@@ -738,6 +815,7 @@ async function createSheetsService(config) {
       ID_записи,
       Создано_UTC,
       Услуга,
+      Цена,
       Дата,
       Время_начала,
       Время_окончания,
@@ -748,7 +826,6 @@ async function createSheetsService(config) {
       Статус,
       Код_отмены,
       Telegram_ID,
-      Chat_ID,
       Исполнено_UTC,
       Отменено_UTC,
     ] = row;
@@ -757,6 +834,7 @@ async function createSheetsService(config) {
       id: ID_записи,
       createdAtUtc: Создано_UTC,
       service: Услуга,
+      price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
       date: Дата,
       timeStart: Время_начала,
       timeEnd: Время_окончания,
@@ -767,7 +845,6 @@ async function createSheetsService(config) {
       status: Статус,
       cancelCode: Код_отмены,
       telegramId: Telegram_ID,
-      chatId: Chat_ID,
       completedAtUtc: Исполнено_UTC,
       cancelledAtUtc: Отменено_UTC,
     };
@@ -781,11 +858,11 @@ async function createSheetsService(config) {
     });
     const rows = res.data.values || [];
 
-    // Код отмены находится в колонке с индексом 11
+    // Код отмены находится в колонке с индексом 12 (после добавления колонки Цена)
     const row = rows.find(
       (r) =>
-        r[11] &&
-        String(r[11]).toUpperCase() === String(cancelCode).toUpperCase()
+        r[12] &&
+        String(r[12]).toUpperCase() === String(cancelCode).toUpperCase()
     );
     if (!row) return null;
 
@@ -793,6 +870,7 @@ async function createSheetsService(config) {
       ID_записи,
       Создано_UTC,
       Услуга,
+      Цена,
       Дата,
       Время_начала,
       Время_окончания,
@@ -803,7 +881,6 @@ async function createSheetsService(config) {
       Статус,
       Код_отмены,
       Telegram_ID,
-      Chat_ID,
       Исполнено_UTC,
       Отменено_UTC,
     ] = row;
@@ -812,6 +889,7 @@ async function createSheetsService(config) {
       id: ID_записи,
       createdAtUtc: Создано_UTC,
       service: Услуга,
+      price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
       date: Дата,
       timeStart: Время_начала,
       timeEnd: Время_окончания,
@@ -822,7 +900,6 @@ async function createSheetsService(config) {
       status: Статус,
       cancelCode: Код_отмены,
       telegramId: Telegram_ID,
-      chatId: Chat_ID,
       completedAtUtc: Исполнено_UTC,
       cancelledAtUtc: Отменено_UTC,
     };
@@ -946,6 +1023,7 @@ async function createSheetsService(config) {
           ID_записи,
           Создано_UTC,
           Услуга,
+          Цена,
           Дата,
           Время_начала,
           Время_окончания,
@@ -956,7 +1034,6 @@ async function createSheetsService(config) {
           Статус,
           Код_отмены,
           Telegram_ID,
-          Chat_ID,
           Исполнено_UTC,
           Отменено_UTC,
         ] = row;
@@ -964,6 +1041,7 @@ async function createSheetsService(config) {
           id: ID_записи,
           createdAtUtc: Создано_UTC,
           service: Услуга,
+          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
           date: Дата,
           timeStart: Время_начала,
           timeEnd: Время_окончания,
@@ -974,7 +1052,6 @@ async function createSheetsService(config) {
           status: Статус,
           cancelCode: Код_отмены,
           telegramId: Telegram_ID,
-          chatId: Chat_ID,
           completedAtUtc: Исполнено_UTC,
           cancelledAtUtc: Отменено_UTC,
         };
@@ -997,6 +1074,7 @@ async function createSheetsService(config) {
         ID_записи,
         Создано_UTC,
         Услуга,
+        Цена,
         Дата,
         Время_начала,
         Время_окончания,
@@ -1007,7 +1085,6 @@ async function createSheetsService(config) {
         Статус,
         Код_отмены,
         Telegram_ID,
-        Chat_ID,
         Исполнено_UTC,
         Отменено_UTC,
       ] = row;
@@ -1015,6 +1092,7 @@ async function createSheetsService(config) {
         id: ID_записи,
         createdAtUtc: Создано_UTC,
         service: Услуга,
+        price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
         date: Дата,
         timeStart: Время_начала,
         timeEnd: Время_окончания,
@@ -1025,7 +1103,6 @@ async function createSheetsService(config) {
         status: Статус,
         cancelCode: Код_отмены,
         telegramId: Telegram_ID,
-        chatId: Chat_ID,
         completedAtUtc: Исполнено_UTC,
         cancelledAtUtc: Отменено_UTC,
       };
@@ -1174,10 +1251,114 @@ async function createSheetsService(config) {
     return true;
   }
 
+  async function getCompletedAppointments({ startDate, endDate } = {}) {
+    // Комментарий: получаем все завершенные записи за период
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+    });
+    const rows = res.data.values || [];
+
+    const timezone = await getTimezone();
+
+    // Преобразуем все записи в объекты
+    let appointments = rows
+      .map((row) => {
+        const [
+          ID_записи,
+          Создано_UTC,
+          Услуга,
+          Цена,
+          Дата,
+          Время_начала,
+          Время_окончания,
+          Имя_клиента,
+          Телефон,
+          Username_Telegram,
+          Комментарий,
+          Статус,
+          Код_отмены,
+          Telegram_ID,
+          Исполнено_UTC,
+          Отменено_UTC,
+        ] = row;
+        return {
+          id: ID_записи,
+          createdAtUtc: Создано_UTC,
+          service: Услуга,
+          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
+          date: Дата,
+          timeStart: Время_начала,
+          timeEnd: Время_окончания,
+          clientName: Имя_клиента,
+          phone: Телефон,
+          username: Username_Telegram,
+          comment: Комментарий,
+          status: Статус,
+          cancelCode: Код_отмены,
+          telegramId: Telegram_ID,
+          completedAtUtc: Исполнено_UTC,
+          cancelledAtUtc: Отменено_UTC,
+        };
+      })
+      .filter((row) => row.status === "исполнено");
+
+    // Фильтруем по датам, если указаны
+    if (startDate || endDate) {
+      appointments = appointments.filter((app) => {
+        // Используем Исполнено_UTC (приоритет) или Дата (если Исполнено_UTC пусто)
+        let dateToCheck = null;
+
+        if (app.completedAtUtc && app.completedAtUtc.trim() !== "") {
+          // Используем дату из Исполнено_UTC, конвертируем в таймзону салона
+          try {
+            dateToCheck = dayjs
+              .utc(app.completedAtUtc)
+              .tz(timezone)
+              .startOf("day");
+          } catch (e) {
+            // Если не удалось распарсить, используем дату записи
+            if (app.date) {
+              dateToCheck = dayjs.tz(app.date, timezone).startOf("day");
+            }
+          }
+        } else if (app.date) {
+          // Используем дату записи
+          dateToCheck = dayjs.tz(app.date, timezone).startOf("day");
+        }
+
+        if (!dateToCheck) {
+          return false;
+        }
+
+        // Проверяем диапазон
+        if (startDate) {
+          const start = dayjs.tz(startDate, timezone).startOf("day");
+          if (dateToCheck.isBefore(start)) {
+            return false;
+          }
+        }
+
+        if (endDate) {
+          const end = dayjs.tz(endDate, timezone).endOf("day");
+          if (dateToCheck.isAfter(end)) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+    }
+
+    return appointments;
+  }
+
   return {
     ensureSheetsStructure,
     getSettings,
     getTimezone,
+    get21DayReminderMessage,
+    set21DayReminderMessage,
     getDaySchedule,
     appendAppointment,
     updateAppointmentStatus,
@@ -1197,6 +1378,7 @@ async function createSheetsService(config) {
     getClientsFor21DayReminder,
     mark21DayReminderSent,
     clear21DayReminderSentAt,
+    getCompletedAppointments,
   };
 }
 
