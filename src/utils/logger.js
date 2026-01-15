@@ -145,10 +145,11 @@ async function logCriticalAction(userId, action, details, result) {
 }
 
 /**
- * Логирование админ-действия (через буфер)
+ * Логирование админ-действия (отключено для оптимизации)
  */
 function logAdminAction(userId, action, details, result) {
-  addToBuffer("ADMIN", userId, action, details, result);
+  // Логирование админ-действий отключено для оптимизации
+  // Оставляем только критичные действия в security.log
 }
 
 /**
@@ -164,10 +165,11 @@ async function logError(userId, action, error, details = {}) {
 }
 
 /**
- * Логирование обычного действия (через буфер)
+ * Логирование обычного действия (отключено для оптимизации)
  */
 function logAction(userId, action, details, result) {
-  addToBuffer("INFO", userId, action, details, result);
+  // Логирование обычных действий отключено для оптимизации
+  // Оставляем только критичные действия в security.log
 }
 
 // Принудительный сброс буфера при завершении процесса

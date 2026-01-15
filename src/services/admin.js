@@ -73,21 +73,21 @@ async function broadcastToClients(bot, sheetsService, payload, options = 200) {
   // Поддерживаем два режима: передан список получателей или отправка всем клиентам
   // Если передан опциональный параметр `options.recipients` - используем его (массив telegramId строк).
   // options: { recipients: string[] | null, throttleMs: number, skipBanned: boolean }
-  const MAX_RECIPIENTS = 1000; // Максимальное количество получателей
+  const MAX_RECIPIENTS = 250; // Максимальное количество получателей
   
   const clientsAll = await sheetsService.getAllClients();
   const results = [];
 
   // Normalize options for backward compatibility (old style: throttleMs number or object)
   let recipients = null;
-  let optsThrottle = 200;
+  let optsThrottle = 750;
   let skipBanned = true;
   if (typeof options === "number") {
     optsThrottle = options;
   } else if (typeof options === "object" && options !== null) {
     const o = options;
     recipients = Array.isArray(o.recipients) ? o.recipients.map(String) : null;
-    optsThrottle = typeof o.throttleMs === "number" ? o.throttleMs : 200;
+    optsThrottle = typeof o.throttleMs === "number" ? o.throttleMs : 750;
     skipBanned = o.skipBanned !== false;
   }
 

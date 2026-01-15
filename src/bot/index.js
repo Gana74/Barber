@@ -31,6 +31,71 @@ const revenueStats = require("../services/revenueStats");
 dayjs.extend(timezonePlugin);
 dayjs.extend(utc);
 
+/**
+ * Очистка файла sessions.json:
+ * - удаляет сессии с lastActivity/updatedAt старше inactiveDays
+ * - сортирует по последней активности и оставляет только maxSessions самых свежих
+ */
+function cleanupSessionsFile({ maxSessions = 150, inactiveDays = 30 } = {}) {
+  try {
+    const sessionsPath = path.resolve(process.cwd(), "sessions.json");
+    if (!fs.existsSync(sessionsPath)) {
+      return;
+    }
+
+    const raw = fs.readFileSync(sessionsPath, { encoding: "utf8" });
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw || "{}");
+    } catch (e) {
+      console.warn("Failed to parse sessions.json for cleanup:", e.message);
+      return;
+    }
+
+    if (!parsed || !Array.isArray(parsed.sessions)) {
+      return;
+    }
+
+    const now = Date.now();
+    const inactiveMs = inactiveDays * 24 * 60 * 60 * 1000;
+    const cutoff = now - inactiveMs;
+
+    // Фильтруем сессии: удаляем сессии без id и с последней активностью старше cutoff
+    let filteredSessions = parsed.sessions.filter((s) => {
+      if (!s || !s.id) return false;
+      const lastActivity = s.lastActivity || s.updatedAt || s.createdAt || now;
+      return lastActivity > cutoff;
+    });
+
+    // Сортируем по последней активности (новые первыми)
+    filteredSessions.sort((a, b) => {
+      const aTime = a.lastActivity || a.updatedAt || a.createdAt || 0;
+      const bTime = b.lastActivity || b.updatedAt || b.createdAt || 0;
+      return bTime - aTime;
+    });
+
+    if (filteredSessions.length > maxSessions) {
+      filteredSessions = filteredSessions.slice(0, maxSessions);
+    }
+
+    if (filteredSessions.length !== parsed.sessions.length) {
+      parsed.sessions = filteredSessions;
+      try {
+        fs.writeFileSync(sessionsPath, JSON.stringify(parsed, null, 2), {
+          encoding: "utf8",
+        });
+        console.log(
+          `Cleaned up sessions.json: kept ${filteredSessions.length} sessions`
+        );
+      } catch (e) {
+        console.warn("Failed to write cleaned sessions.json:", e.message);
+      }
+    }
+  } catch (err) {
+    console.warn("Error while cleaning sessions.json:", err.message);
+  }
+}
+
 function createBot({ config, sheetsService, calendarService }) {
   const bot = new Telegraf(config.botToken);
 
@@ -78,11 +143,23 @@ function createBot({ config, sheetsService, calendarService }) {
     console.warn("Error while sanitizing sessions.json:", err.message);
   }
 
+  // Ограничение количества сессий и удаление неактивных (30+ дней)
+  cleanupSessionsFile({ maxSessions: 150, inactiveDays: 30 });
+
   const localSession = new LocalSession({
     database: "sessions.json",
   });
 
   bot.use(localSession.middleware());
+
+  // Middleware для отметки последней активности пользователя в сессии
+  bot.use(async (ctx, next) => {
+    if (ctx && ctx.session) {
+      // Сохраняем время в миллисекундах с начала эпохи
+      ctx.session.lastActivity = Date.now();
+    }
+    return next();
+  });
 
   const bookingService = createBookingService({
     sheetsService,
@@ -895,7 +972,7 @@ function createBot({ config, sheetsService, calendarService }) {
       bot,
       sheetsService,
       act.payload || act.message,
-      { recipients, throttleMs: 200, skipBanned: true }
+      { recipients, throttleMs: 750, skipBanned: true }
     );
     const ok = results.filter((r) => r.ok).length;
     const fail = results.length - ok;
@@ -1388,8 +1465,8 @@ function createBot({ config, sheetsService, calendarService }) {
         return;
       }
 
-      // Проверка максимального количества получателей (1000)
-      const MAX_RECIPIENTS = 1000;
+      // Проверка максимального количества получателей (250)
+      const MAX_RECIPIENTS = 250;
       if (recipients.length > MAX_RECIPIENTS) {
         await ctx.reply(
           `Превышен лимит получателей: ${recipients.length} (максимум ${MAX_RECIPIENTS}). Ограничьте список получателей.`
@@ -1489,4 +1566,5 @@ function createBot({ config, sheetsService, calendarService }) {
 
 module.exports = {
   createBot,
+  cleanupSessionsFile,
 };

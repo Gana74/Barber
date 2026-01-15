@@ -5,6 +5,7 @@ const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const timezonePlugin = require("dayjs/plugin/timezone");
 const { createBookingService } = require("./booking");
+const { cleanupSessionsFile } = require("../bot");
 const { formatDate } = require("../utils/formatDate");
 
 dayjs.extend(utc);
@@ -13,12 +14,24 @@ dayjs.extend(timezonePlugin);
 // Комментарий: простая in-memory защита от дублей напоминаний за 2 часа
 const twoHourRemindedIds = new Set();
 
+// Флаги блокировки для предотвращения одновременного выполнения cron-задач
+const cronLocks = {
+  dayReminder: false,
+  twoHourReminder: false,
+  autoComplete: false,
+  reminder21Day: false,
+  sessionCleanup: false,
+};
+
 // Очистка старых ID каждый день в полночь
 function setupReminderCleanup() {
   cron.schedule(
     "0 0 * * *",
     () => {
       twoHourRemindedIds.clear();
+      console.log(
+        "[reminders] Cleared 2h reminder cache (twoHourRemindedIds) at 00:00 UTC"
+      );
     },
     {
       timezone: "UTC",
@@ -47,6 +60,12 @@ function setupReminders({
   cron.schedule(
     "0 10 * * *",
     async () => {
+      // Блокировка одновременного выполнения
+      if (cronLocks.dayReminder) {
+        console.log("Напоминания за день записи уже выполняются, пропускаем");
+        return;
+      }
+      cronLocks.dayReminder = true;
       try {
         const timezone = await sheetsService.getTimezone();
         const nowTz = dayjs().tz(timezone);
@@ -95,8 +114,8 @@ function setupReminders({
             });
             sentCount++;
 
-            // Добавляем небольшую задержку между сообщениями
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            // Добавляем задержку между сообщениями для оптимизации
+            await new Promise((resolve) => setTimeout(resolve, 500));
           } catch (err) {
             errorCount++;
             console.error(
@@ -133,6 +152,8 @@ function setupReminders({
         }
       } catch (err) {
         console.error("Критическая ошибка в напоминаниях за день записи:", err);
+      } finally {
+        cronLocks.dayReminder = false;
       }
     },
     {
@@ -144,6 +165,11 @@ function setupReminders({
   cron.schedule(
     "*/5 * * * *",
     async () => {
+      // Блокировка одновременного выполнения
+      if (cronLocks.twoHourReminder) {
+        return;
+      }
+      cronLocks.twoHourReminder = true;
       try {
         const timezone = await sheetsService.getTimezone();
         const nowTz = dayjs().tz(timezone);
@@ -241,6 +267,8 @@ function setupReminders({
         }
       } catch (err) {
         console.error("Критическая ошибка в 2-часовых напоминаниях:", err);
+      } finally {
+        cronLocks.twoHourReminder = false;
       }
     },
     {
@@ -282,6 +310,11 @@ function setupReminders({
   cron.schedule(
     "*/30 * * * *",
     async () => {
+      // Блокировка одновременного выполнения
+      if (cronLocks.autoComplete) {
+        return;
+      }
+      cronLocks.autoComplete = true;
       try {
         const timezone = await sheetsService.getTimezone();
         const nowTz = dayjs().tz(timezone);
@@ -391,6 +424,8 @@ function setupReminders({
           "Критическая ошибка в автоматическом завершении записей:",
           err
         );
+      } finally {
+        cronLocks.autoComplete = false;
       }
     },
     {
@@ -402,6 +437,12 @@ function setupReminders({
   cron.schedule(
     "0 11 * * *",
     async () => {
+      // Блокировка одновременного выполнения
+      if (cronLocks.reminder21Day) {
+        console.log("Напоминания 21 день уже выполняются, пропускаем");
+        return;
+      }
+      cronLocks.reminder21Day = true;
       try {
         const timezone = await sheetsService.getTimezone();
         const nowTz = dayjs().tz(timezone);
@@ -441,8 +482,8 @@ function setupReminders({
             await sheetsService.mark21DayReminderSent(client.telegramId);
             sentCount++;
 
-            // Добавляем небольшую задержку между сообщениями
-            await new Promise((resolve) => setTimeout(resolve, 200));
+            // Добавляем задержку между сообщениями для оптимизации
+            await new Promise((resolve) => setTimeout(resolve, 500));
           } catch (err) {
             errorCount++;
             console.error(
@@ -486,6 +527,31 @@ function setupReminders({
         }
       } catch (err) {
         console.error("Критическая ошибка в напоминаниях 21 день:", err);
+      } finally {
+        cronLocks.reminder21Day = false;
+      }
+    },
+    {
+      timezone: config.defaultTimezone,
+    }
+  );
+
+  // Ночная очистка старых сессий (30+ дней неактивности) и ограничение их количества.
+  // Запускается в 02:00 по времени салона, когда клиенты спят.
+  cron.schedule(
+    "0 2 * * *",
+    async () => {
+      if (cronLocks.sessionCleanup) {
+        console.log("Session cleanup is already running, skipping this tick");
+        return;
+      }
+      cronLocks.sessionCleanup = true;
+      try {
+        cleanupSessionsFile({ maxSessions: 150, inactiveDays: 30 });
+      } catch (err) {
+        console.error("Critical error during nightly session cleanup:", err);
+      } finally {
+        cronLocks.sessionCleanup = false;
       }
     },
     {

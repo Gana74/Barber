@@ -4,6 +4,7 @@
 const { google } = require("googleapis");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
+const cron = require("node-cron");
 
 dayjs.extend(utc);
 
@@ -167,7 +168,8 @@ async function createSheetsService(config) {
     workHoursCache = {
       byDate,
       byWeekday,
-      expiresAt: Date.now() + 120 * 1000,
+      // TTL 30 минут для рабочих часов
+      expiresAt: Date.now() + 30 * 60 * 1000,
     };
 
     return workHoursCache;
@@ -222,7 +224,17 @@ async function createSheetsService(config) {
     const settings = {};
     rows.forEach((row) => {
       const [key, value] = row;
-      if (key) settings[key] = value;
+      if (key && typeof key === "string") {
+        // Нормализуем ключ: убираем пробелы в начале и конце
+        const normalizedKey = key.trim();
+        // Нормализуем значение: если value undefined или null, используем пустую строку
+        // Если value существует, преобразуем в строку и убираем пробелы
+        const normalizedValue =
+          value !== undefined && value !== null ? String(value).trim() : "";
+        if (normalizedKey) {
+          settings[normalizedKey] = normalizedValue;
+        }
+      }
     });
     return settings;
   }
@@ -259,10 +271,14 @@ async function createSheetsService(config) {
     let found = false;
     let rowIndex = -1;
 
-    // Ищем существующую запись
+    // Ищем существующую запись (нормализуем ключ для сравнения)
     for (let i = 0; i < rows.length; i++) {
       const [key] = rows[i];
-      if (key === "напоминание_21день_текст") {
+      if (
+        key &&
+        typeof key === "string" &&
+        key.trim() === "напоминание_21день_текст"
+      ) {
         found = true;
         rowIndex = i + 2; // +2 потому что A1 - заголовок, A2 - первая строка данных
         break;
@@ -293,7 +309,12 @@ async function createSheetsService(config) {
 
   async function getTipsLink() {
     const settings = await getSettings();
-    return settings.ссылка_на_чаевые || "";
+    const link = settings.ссылка_на_чаевые;
+    // Проверяем, что ссылка существует и не пустая
+    if (link && typeof link === "string" && link.trim().length > 0) {
+      return link.trim();
+    }
+    return "";
   }
 
   async function setTipsLink(link) {
@@ -324,10 +345,10 @@ async function createSheetsService(config) {
     let found = false;
     let rowIndex = -1;
 
-    // Ищем существующую запись
+    // Ищем существующую запись (нормализуем ключ для сравнения)
     for (let i = 0; i < rows.length; i++) {
       const [key] = rows[i];
-      if (key === "ссылка_на_чаевые") {
+      if (key && typeof key === "string" && key.trim() === "ссылка_на_чаевые") {
         found = true;
         rowIndex = i + 2; // +2 потому что A1 - заголовок, A2 - первая строка данных
         break;
@@ -530,7 +551,8 @@ async function createSheetsService(config) {
     dayCache[dateStr] = {
       schedule,
       appointments,
-      expiresAt: now + 60 * 1000, // TTL 60 секунд
+      // TTL 30 минут для кэша расписания по дням
+      expiresAt: now + 30 * 60 * 1000,
     };
 
     return { schedule, appointments };
@@ -1572,6 +1594,48 @@ async function createSheetsService(config) {
 
     return count;
   }
+
+  // Очистка устаревшего in-memory кэша Google Sheets (расписание и рабочие часы)
+  function cleanupSheetsCache() {
+    const now = Date.now();
+    let removedDayKeys = 0;
+
+    Object.keys(dayCache).forEach((key) => {
+      const entry = dayCache[key];
+      if (!entry || !entry.expiresAt || entry.expiresAt < now) {
+        delete dayCache[key];
+        removedDayKeys += 1;
+      }
+    });
+
+    if (workHoursCache && workHoursCache.expiresAt && workHoursCache.expiresAt < now) {
+      workHoursCache = { byDate: {}, byWeekday: {}, expiresAt: 0 };
+    }
+
+    if (removedDayKeys > 0) {
+      console.log(
+        `[googleSheets] Cleaned dayCache: removed ${removedDayKeys} expired keys`
+      );
+    }
+  }
+
+  // Ежечасная очистка кэша Google Sheets (лёгкая операция, допустима в рабочее время)
+  cron.schedule(
+    "0 * * * *",
+    () => {
+      try {
+        cleanupSheetsCache();
+      } catch (e) {
+        console.error(
+          "[googleSheets] Error during hourly cache cleanup:",
+          e.message || e
+        );
+      }
+    },
+    {
+      timezone: config.defaultTimezone || "UTC",
+    }
+  );
 
   return {
     ensureSheetsStructure,
