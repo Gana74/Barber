@@ -12,6 +12,12 @@ function calculateRevenueStats(appointments) {
     return sum + Number(app.price);
   }, 0);
 
+  // Средний чек
+  const average =
+    appointmentsWithPrice.length > 0
+      ? Math.round((total / appointmentsWithPrice.length) * 100) / 100
+      : 0;
+
   // Группировка по услугам
   const byServiceMap = {};
 
@@ -36,17 +42,39 @@ function calculateRevenueStats(appointments) {
   return {
     total: Math.round(total * 100) / 100, // Округляем до 2 знаков после запятой
     count: appointmentsWithPrice.length,
+    average,
     byService,
   };
 }
 
-function formatRevenueStats(stats, periodLabel) {
+/**
+ * Форматирование статистики выручки.
+ * extraMetrics опционально: { newClientsCount, cancelledCount }
+ */
+function formatRevenueStats(stats, periodLabel, extraMetrics) {
   const lines = [
     `📈 Выручка за ${periodLabel}:`,
     `• Всего: ${formatNumber(stats.total)} ₽`,
+    `• Средний чек: ${formatNumber(stats.average || 0)} ₽`,
     `• Записей исполнено: ${stats.count}`,
-    ``,
   ];
+
+  if (extraMetrics) {
+    if (
+      typeof extraMetrics.newClientsCount === "number" &&
+      extraMetrics.newClientsCount >= 0
+    ) {
+      lines.push(`• Новых клиентов: ${extraMetrics.newClientsCount}`);
+    }
+    if (
+      typeof extraMetrics.cancelledCount === "number" &&
+      extraMetrics.cancelledCount >= 0
+    ) {
+      lines.push(`• Записей отменено: ${extraMetrics.cancelledCount}`);
+    }
+  }
+
+  lines.push("");
 
   if (stats.byService.length > 0) {
     lines.push(`Топ услуг:`);

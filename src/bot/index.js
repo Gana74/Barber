@@ -324,6 +324,7 @@ function createBot({ config, sheetsService, calendarService }) {
     ["Массовая рассылка"],
     ["Управление услугами"],
     ["Редактировать напоминание 21 день"],
+    ["Редактировать ссылку на чаевые"],
     ["📊 Финансовая статистика"],
     ["Вернуться в пользовательский режим"],
   ]).resize();
@@ -400,6 +401,7 @@ function createBot({ config, sheetsService, calendarService }) {
       "unban",
       "broadcast",
       "edit_21day_reminder",
+      "edit_tips_link",
     ]);
 
     if (inputActions.has(action)) {
@@ -415,6 +417,8 @@ function createBot({ config, sheetsService, calendarService }) {
           ? "Отправьте Telegram ID пользователя для разбанивания. Для отмены напишите /admin_cancel"
           : action === "edit_21day_reminder"
           ? "Отправьте новый текст для напоминания через 21 день. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel"
+          : action === "edit_tips_link"
+          ? "Отправьте новую ссылку на чаевые (должна начинаться с http://, https:// или t.me/). Для отмены напишите /admin_cancel"
           : "Неизвестное действие"
       );
       return;
@@ -486,6 +490,26 @@ function createBot({ config, sheetsService, calendarService }) {
       } catch (err) {
         await ctx.reply(
           `Ошибка при получении текущего сообщения: ${err.message}`
+        );
+      }
+    }
+  });
+
+  bot.hears("Редактировать ссылку на чаевые", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      // Показываем текущую ссылку
+      try {
+        const currentLink = await sheetsService.getTipsLink();
+        await ctx.reply(
+          `Текущая ссылка на чаевые:\n\n${
+            currentLink || "не установлена"
+          }\n\nОтправьте новую ссылку (должна начинаться с http://, https:// или t.me/). Для отмены напишите /admin_cancel`
+        );
+        await handleAdminAction(ctx, "edit_tips_link");
+      } catch (err) {
+        await ctx.reply(
+          `Ошибка при получении текущей ссылки: ${err.message}`
         );
       }
     }
@@ -611,8 +635,33 @@ function createBot({ config, sheetsService, calendarService }) {
         endDate,
       });
 
+      let extraMetrics = null;
+
+      // Дополнительные показатели считаем только для периодов с датами
+      if (startDate || endDate) {
+        const [cancelledAppointments, newClientsCount] = await Promise.all([
+          sheetsService.getCancelledAppointmentsInPeriod({
+            startDate,
+            endDate,
+          }),
+          sheetsService.getNewClientsCountInPeriod({
+            startDate,
+            endDate,
+          }),
+        ]);
+
+        extraMetrics = {
+          newClientsCount,
+          cancelledCount: cancelledAppointments.length,
+        };
+      }
+
       const stats = revenueStats.calculateRevenueStats(appointments);
-      const formatted = revenueStats.formatRevenueStats(stats, periodLabel);
+      const formatted = revenueStats.formatRevenueStats(
+        stats,
+        periodLabel,
+        extraMetrics
+      );
 
       await ctx.reply(formatted);
     } catch (error) {
@@ -1218,6 +1267,58 @@ function createBot({ config, sheetsService, calendarService }) {
         logError(
           ctx.from.id,
           "admin_edit_21day_reminder",
+          { error: err.message },
+          "error"
+        );
+        return;
+      }
+
+      delete ctx.session.adminAction;
+      return;
+    }
+
+    if (action === "edit_tips_link") {
+      const link = text;
+      if (!link || link.trim().length === 0) {
+        await ctx.reply("Ссылка не может быть пустой. /admin_cancel для отмены.");
+        return;
+      }
+
+      // Валидация URL
+      const trimmedLink = link.trim();
+      const isValidUrl =
+        trimmedLink.startsWith("http://") ||
+        trimmedLink.startsWith("https://") ||
+        trimmedLink.startsWith("t.me/");
+
+      if (!isValidUrl || trimmedLink.length < 5) {
+        await ctx.reply(
+          "Ссылка должна начинаться с http://, https:// или t.me/ и быть не менее 5 символов. /admin_cancel для отмены."
+        );
+        return;
+      }
+
+      try {
+        await sheetsService.setTipsLink(trimmedLink);
+
+        // Логирование действия админа
+        logAdminAction(
+          ctx.from.id,
+          "admin_edit_tips_link",
+          { linkLength: trimmedLink.length },
+          "success"
+        );
+
+        await ctx.reply(
+          `Ссылка на чаевые успешно обновлена!\n\nНовая ссылка:\n${trimmedLink}`
+        );
+      } catch (err) {
+        await ctx.reply(
+          `Ошибка при сохранении ссылки: ${err.message}\n/admin_cancel для отмены.`
+        );
+        logError(
+          ctx.from.id,
+          "admin_edit_tips_link",
           { error: err.message },
           "error"
         );

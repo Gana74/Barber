@@ -24,3 +24,10 @@
 {"timestamp":"2026-01-12T20:14:55.034Z","level":"INFO","userId":502105220,"action":"appointment_created","details":{"appointmentId":"A_mkblqf2m_blgpf4","service":"Комплекс (мужская стрижка + оформление бороды)","date":"2026-01-13","timeStart":"10:00","timeEnd":"11:30"},"result":"success"}
 {"timestamp":"2026-01-12T20:15:27.993Z","level":"INFO","userId":502105220,"action":"appointment_creation_failed","details":{"reason":"limit_exceeded","serviceKey":"MEN_HAIRCUT","dateStr":"2026-01-13","timeStr":"11:30"},"result":"failed"}
 {"timestamp":"2026-01-12T20:18:11.271Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}
+{"timestamp":"2026-01-15T10:24:30.505Z","level":"INFO","userId":502105220,"action":"appointment_creation_failed","details":{"reason":"limit_exceeded","serviceKey":"MEN_HAIRCUT","dateStr":"2026-01-15","timeStr":"15:30"},"result":"failed"}
+{"timestamp":"2026-01-15T10:24:45.060Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}
+{"timestamp":"2026-01-15T10:25:20.691Z","level":"CRITICAL","userId":502105220,"action":"admin_cancel_booking_by_code","details":{"appointmentId":"A_mkbkrppd_pxx2nl","cancelCode":"9L4F9U","clientTelegramId":"502105220","date":"2026-01-22","time":"20:00"},"result":"success"}
+{"timestamp":"2026-01-15T10:32:17.917Z","level":"INFO","userId":502105220,"action":"appointment_created","details":{"appointmentId":"A_mkfb8o3m_qhdeiq","service":"Оформление бороды","date":"2026-01-15","timeStart":"18:00","timeEnd":"18:30"},"result":"success"}
+{"timestamp":"2026-01-15T10:48:53.702Z","level":"INFO","userId":502105220,"action":"appointment_created","details":{"appointmentId":"A_mkfbu2x6_0gpvgs","service":"Стрижка под машинку","date":"2026-01-15","timeStart":"16:00","timeEnd":"16:30"},"result":"success"}
+{"timestamp":"2026-01-15T10:49:06.527Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}
+{"timestamp":"2026-01-15T10:49:44.473Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}

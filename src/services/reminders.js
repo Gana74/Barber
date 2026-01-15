@@ -317,6 +317,30 @@ function setupReminders({
                     app.id
                   } автоматически завершена (${app.date} ${app.timeEnd})`
                 );
+
+                // Отправляем уведомление клиенту об окончании услуги
+                if (app.telegramId) {
+                  try {
+                    const tipsLink = await sheetsService.getTipsLink();
+                    const serviceName = app.service || "Услуга";
+                    let message = `${serviceName} завершена, благодарю что выбираете меня!`;
+
+                    if (tipsLink && tipsLink.trim().length > 0) {
+                      message += ` В благодарность мастеру можете дать чаевые ${tipsLink}`;
+                    }
+
+                    await bot.telegram.sendMessage(
+                      String(app.telegramId),
+                      message
+                    );
+                  } catch (err) {
+                    console.error(
+                      `Ошибка отправки уведомления об окончании услуги клиенту ${app.telegramId}:`,
+                      err.message
+                    );
+                    // Не увеличиваем errorCount, так как запись уже успешно завершена
+                  }
+                }
               } else {
                 errorCount++;
                 console.error(

@@ -291,6 +291,71 @@ async function createSheetsService(config) {
     return true;
   }
 
+  async function getTipsLink() {
+    const settings = await getSettings();
+    return settings.ссылка_на_чаевые || "";
+  }
+
+  async function setTipsLink(link) {
+    if (!link || typeof link !== "string" || link.trim().length === 0) {
+      throw new Error("Ссылка не может быть пустой");
+    }
+
+    // Валидация URL
+    const trimmedLink = link.trim();
+    const isValidUrl =
+      trimmedLink.startsWith("http://") ||
+      trimmedLink.startsWith("https://") ||
+      trimmedLink.startsWith("t.me/");
+
+    if (!isValidUrl || trimmedLink.length < 5) {
+      throw new Error(
+        "Ссылка должна начинаться с http://, https:// или t.me/ и быть не менее 5 символов"
+      );
+    }
+
+    // Получаем все настройки
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.SETTINGS}!A2:B100`,
+    });
+
+    const rows = res.data.values || [];
+    let found = false;
+    let rowIndex = -1;
+
+    // Ищем существующую запись
+    for (let i = 0; i < rows.length; i++) {
+      const [key] = rows[i];
+      if (key === "ссылка_на_чаевые") {
+        found = true;
+        rowIndex = i + 2; // +2 потому что A1 - заголовок, A2 - первая строка данных
+        break;
+      }
+    }
+
+    if (found) {
+      // Обновляем существующую запись
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!B${rowIndex}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[trimmedLink]] },
+      });
+    } else {
+      // Добавляем новую запись
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [["ссылка_на_чаевые", trimmedLink]] },
+      });
+    }
+
+    return true;
+  }
+
   async function ensureSheetsStructure() {
     const meta = await sheets.spreadsheets.get({
       spreadsheetId: config.google.sheetsId,
@@ -351,6 +416,18 @@ async function createSheetsService(config) {
               "Привет, {clientName}! Тебя давно небыло на стрижке, пора подстричься!",
             ],
           ],
+        },
+      });
+    }
+    // Инициализируем дефолтную ссылку на чаевые, если её нет
+    if (!settings.ссылка_на_чаевые) {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: {
+          values: [["ссылка_на_чаевые", ""]],
         },
       });
     }
@@ -1353,12 +1430,157 @@ async function createSheetsService(config) {
     return appointments;
   }
 
+  async function getCancelledAppointmentsInPeriod({ startDate, endDate } = {}) {
+    // Если период не задан, возвращаем пустой список, чтобы не считать «за всё время»
+    if (!startDate && !endDate) {
+      return [];
+    }
+
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+    });
+    const rows = res.data.values || [];
+
+    const timezone = await getTimezone();
+
+    let appointments = rows
+      .map((row) => {
+        const [
+          ID_записи,
+          Создано_UTC,
+          Услуга,
+          Цена,
+          Дата,
+          Время_начала,
+          Время_окончания,
+          Имя_клиента,
+          Телефон,
+          Username_Telegram,
+          Комментарий,
+          Статус,
+          Код_отмены,
+          Telegram_ID,
+          Исполнено_UTC,
+          Отменено_UTC,
+        ] = row;
+        return {
+          id: ID_записи,
+          createdAtUtc: Создано_UTC,
+          service: Услуга,
+          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
+          date: Дата,
+          timeStart: Время_начала,
+          timeEnd: Время_окончания,
+          clientName: Имя_клиента,
+          phone: Телефон,
+          username: Username_Telegram,
+          comment: Комментарий,
+          status: Статус,
+          cancelCode: Код_отмены,
+          telegramId: Telegram_ID,
+          completedAtUtc: Исполнено_UTC,
+          cancelledAtUtc: Отменено_UTC,
+        };
+      })
+      .filter((row) => row.status === "отменена" && row.cancelledAtUtc);
+
+    // Фильтруем по дате отмены (Отменено_UTC), приведённой к таймзоне салона
+    if (startDate || endDate) {
+      appointments = appointments.filter((app) => {
+        let dateToCheck = null;
+
+        try {
+          dateToCheck = dayjs
+            .utc(app.cancelledAtUtc)
+            .tz(timezone)
+            .startOf("day");
+        } catch (e) {
+          // Если не удалось распарсить дату отмены — пропускаем
+          return false;
+        }
+
+        if (!dateToCheck) {
+          return false;
+        }
+
+        if (startDate) {
+          const start = dayjs.tz(startDate, timezone).startOf("day");
+          if (dateToCheck.isBefore(start)) {
+            return false;
+          }
+        }
+
+        if (endDate) {
+          const end = dayjs.tz(endDate, timezone).endOf("day");
+          if (dateToCheck.isAfter(end)) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+    }
+
+    return appointments;
+  }
+
+  async function getNewClientsCountInPeriod({ startDate, endDate } = {}) {
+    // Если период не задан, считаем, что показатель не используется
+    if (!startDate && !endDate) {
+      return 0;
+    }
+
+    const timezone = await getTimezone();
+    const clients = await getAllClients();
+
+    const count = clients.filter((client) => {
+      if (!client.firstSeenUtc || String(client.firstSeenUtc).trim() === "") {
+        return false;
+      }
+
+      let dateToCheck = null;
+      try {
+        dateToCheck = dayjs
+          .utc(client.firstSeenUtc)
+          .tz(timezone)
+          .startOf("day");
+      } catch (e) {
+        return false;
+      }
+
+      if (!dateToCheck) {
+        return false;
+      }
+
+      if (startDate) {
+        const start = dayjs.tz(startDate, timezone).startOf("day");
+        if (dateToCheck.isBefore(start)) {
+          return false;
+        }
+      }
+
+      if (endDate) {
+        const end = dayjs.tz(endDate, timezone).endOf("day");
+        if (dateToCheck.isAfter(end)) {
+          return false;
+        }
+      }
+
+      return true;
+    }).length;
+
+    return count;
+  }
+
   return {
     ensureSheetsStructure,
     getSettings,
     getTimezone,
     get21DayReminderMessage,
     set21DayReminderMessage,
+    getTipsLink,
+    setTipsLink,
     getDaySchedule,
     appendAppointment,
     updateAppointmentStatus,
@@ -1379,6 +1601,8 @@ async function createSheetsService(config) {
     mark21DayReminderSent,
     clear21DayReminderSentAt,
     getCompletedAppointments,
+    getCancelledAppointmentsInPeriod,
+    getNewClientsCountInPeriod,
   };
 }
 
