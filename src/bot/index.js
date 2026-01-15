@@ -320,13 +320,18 @@ function createBot({ config, sheetsService, calendarService }) {
   const adminKeyboard = Markup.keyboard([
     ["Просмотр записей", "Статистика"],
     ["Отменить запись (по коду)"],
-    ["Забанить пользователя", "Разбанить пользователя"],
     ["Массовая рассылка"],
+    ["📊 Финансовая статистика"],
+    ["⚙️ Настройки"],
+    ["Вернуться в пользовательский режим"],
+  ]).resize();
+
+  const settingsKeyboard = Markup.keyboard([
+    ["Забанить пользователя", "Разбанить пользователя"],
     ["Управление услугами"],
     ["Редактировать напоминание 21 день"],
     ["Редактировать ссылку на чаевые"],
-    ["📊 Финансовая статистика"],
-    ["Вернуться в пользовательский режим"],
+    ["Назад в админ-меню"],
   ]).resize();
 
   const servicesKeyboard = Markup.keyboard([
@@ -508,10 +513,17 @@ function createBot({ config, sheetsService, calendarService }) {
         );
         await handleAdminAction(ctx, "edit_tips_link");
       } catch (err) {
-        await ctx.reply(
-          `Ошибка при получении текущей ссылки: ${err.message}`
-        );
+        await ctx.reply(`Ошибка при получении текущей ссылки: ${err.message}`);
       }
+    }
+  });
+
+  bot.hears("⚙️ Настройки", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      // Устанавливаем флаг, что пользователь находится в настройках
+      ctx.session.fromSettings = true;
+      await ctx.reply("Настройки. Выберите действие:", settingsKeyboard);
     }
   });
 
@@ -608,7 +620,9 @@ function createBot({ config, sheetsService, calendarService }) {
         case "this_month":
           startDate = now.startOf("month").format("YYYY-MM-DD");
           endDate = now.format("YYYY-MM-DD");
-          periodLabel = `${now.format("MMMM YYYY")} (по ${formatDate(endDate)})`;
+          periodLabel = `${now.format("MMMM YYYY")} (по ${formatDate(
+            endDate
+          )})`;
           break;
 
         case "last_month":
@@ -667,7 +681,9 @@ function createBot({ config, sheetsService, calendarService }) {
     } catch (error) {
       console.error("Ошибка при получении статистики доходов:", error);
       await ctx.reply(
-        `Ошибка при получении статистики: ${error.message || "Неизвестная ошибка"}`
+        `Ошибка при получении статистики: ${
+          error.message || "Неизвестная ошибка"
+        }`
       );
     }
   });
@@ -676,6 +692,8 @@ function createBot({ config, sheetsService, calendarService }) {
   bot.hears("Управление услугами", async (ctx) => {
     if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
+      // Сохраняем информацию о том, что пользователь пришел из настроек
+      ctx.session.fromSettings = true;
       await ctx.reply(
         "Управление услугами. Выберите действие:",
         servicesKeyboard
@@ -686,11 +704,19 @@ function createBot({ config, sheetsService, calendarService }) {
   bot.hears("Назад в админ-меню", async (ctx) => {
     if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
-      delete ctx.session.servicesAction;
-      await ctx.reply(
-        "Включён режим администратора. Выберите действие:",
-        adminKeyboard
-      );
+      // Если пользователь находится в управлении услугами и пришел из настроек
+      if (ctx.session.servicesAction && ctx.session.fromSettings) {
+        delete ctx.session.servicesAction;
+        await ctx.reply("Настройки. Выберите действие:", settingsKeyboard);
+      } else {
+        // Возврат из настроек в главное меню или из других мест
+        delete ctx.session.servicesAction;
+        delete ctx.session.fromSettings;
+        await ctx.reply(
+          "Включён режим администратора. Выберите действие:",
+          adminKeyboard
+        );
+      }
     }
   });
 
@@ -1235,7 +1261,9 @@ function createBot({ config, sheetsService, calendarService }) {
     if (action === "edit_21day_reminder") {
       const message = text;
       if (!message || message.trim().length === 0) {
-        await ctx.reply("Текст не может быть пустым. /admin_cancel для отмены.");
+        await ctx.reply(
+          "Текст не может быть пустым. /admin_cancel для отмены."
+        );
         return;
       }
 
@@ -1248,7 +1276,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
       try {
         await sheetsService.set21DayReminderMessage(sanitizedMessage);
-        
+
         // Логирование действия админа
         logAdminAction(
           ctx.from.id,
@@ -1280,7 +1308,9 @@ function createBot({ config, sheetsService, calendarService }) {
     if (action === "edit_tips_link") {
       const link = text;
       if (!link || link.trim().length === 0) {
-        await ctx.reply("Ссылка не может быть пустой. /admin_cancel для отмены.");
+        await ctx.reply(
+          "Ссылка не может быть пустой. /admin_cancel для отмены."
+        );
         return;
       }
 

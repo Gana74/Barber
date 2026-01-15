@@ -31,3 +31,4 @@
 {"timestamp":"2026-01-15T10:48:53.702Z","level":"INFO","userId":502105220,"action":"appointment_created","details":{"appointmentId":"A_mkfbu2x6_0gpvgs","service":"Стрижка под машинку","date":"2026-01-15","timeStart":"16:00","timeEnd":"16:30"},"result":"success"}
 {"timestamp":"2026-01-15T10:49:06.527Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}
 {"timestamp":"2026-01-15T10:49:44.473Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}
+{"timestamp":"2026-01-15T11:11:17.185Z","level":"ADMIN","userId":502105220,"action":"admin_mode_enabled","details":{},"result":"success"}
