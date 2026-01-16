@@ -271,7 +271,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           null;
 
         if (!wh) {
-          await ctx.reply("В этот день барбершоп закрыт. Выбери другую дату.");
+          await ctx.reply("В этот день у меня выходной. Выбери другую дату.");
         } else {
           await ctx.reply(
             `На этот день нет свободных слотов. Рабочие часы: ${wh.start}–${wh.end}. Попробуй выбрать другую дату.`
@@ -643,7 +643,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         } else {
           if (result.reason === "closed") {
             await ctx.reply(
-              "Нельзя создать запись: в этот день барбершоп закрыт. Попробуй другую дату."
+              "Нельзя создать запись: в этот день у меня выходной. Попробуй другую дату."
             );
             return ctx.scene.leave();
           }
