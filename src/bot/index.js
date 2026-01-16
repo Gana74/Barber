@@ -200,10 +200,7 @@ function createBot({ config, sheetsService, calendarService }) {
   bot.telegram
     .setMyCommands([
       { command: "start", description: "Начать общение с начала" },
-      { command: "book", description: "Записаться на стрижку" },
       { command: "services", description: "Посмотреть список услуг" },
-      { command: "admin", description: "Режим администратора" },
-      { command: "user", description: "Режим пользователя" },
     ])
     .catch((err) => {
       console.warn("Failed to set bot commands menu:", err.message);
@@ -615,7 +612,9 @@ function createBot({ config, sheetsService, calendarService }) {
         );
         await handleAdminAction(ctx, "edit_contacts");
       } catch (err) {
-        await ctx.reply(`Ошибка при получении текущих контактов: ${err.message}`);
+        await ctx.reply(
+          `Ошибка при получении текущих контактов: ${err.message}`
+        );
       }
     }
   });
@@ -1462,8 +1461,11 @@ function createBot({ config, sheetsService, calendarService }) {
     }
 
     if (action === "edit_contacts") {
-      const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
-      
+      const lines = text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
       if (lines.length < 2) {
         await ctx.reply(
           "Необходимо указать телефон и адрес в двух строках:\nПервая строка - телефон\nВторая строка - адрес\n\n/admin_cancel для отмены."
@@ -1496,7 +1498,10 @@ function createBot({ config, sheetsService, calendarService }) {
         logAdminAction(
           ctx.from.id,
           "admin_edit_contacts",
-          { phoneLength: phone.trim().length, addressLength: address.trim().length },
+          {
+            phoneLength: phone.trim().length,
+            addressLength: address.trim().length,
+          },
           "success"
         );
 
