@@ -80,6 +80,16 @@ function setupReminders({
           (app) => app.status === booking.STATUSES.ACTIVE
         );
 
+        // Получаем контакты из Google Sheets с fallback на config (один раз перед циклом)
+        const barberPhone =
+          (await sheetsService.getBarberPhone()) ||
+          config.barberPhone ||
+          "+7 XXX XXX-XX-XX";
+        const barberAddress =
+          (await sheetsService.getBarberAddress()) ||
+          config.barberAddress ||
+          "Адрес уточняйте у администратора";
+
         let sentCount = 0;
         let errorCount = 0;
 
@@ -105,8 +115,8 @@ function setupReminders({
             "3. Выберите запись для отмены",
             "",
             "📞 *Контакты:*",
-            config.barberPhone || "+7 XXX XXX-XX-XX",
-            config.barberAddress || "Адрес уточняйте у администратора",
+            barberPhone,
+            barberAddress,
           ].join("\n");
           try {
             await bot.telegram.sendMessage(app.telegramId, msg, {
@@ -191,6 +201,12 @@ function setupReminders({
           (app) => app.status === booking.STATUSES.ACTIVE
         );
 
+        // Получаем телефон из Google Sheets с fallback на config (один раз перед циклом)
+        const barberPhone =
+          (await sheetsService.getBarberPhone()) ||
+          config.barberPhone ||
+          "+7 XXX XXX-XX-XX";
+
         let sentCount = 0;
         let errorCount = 0;
 
@@ -228,7 +244,7 @@ function setupReminders({
               "Отмените запись через бота в разделе «Мои записи».",
               "",
               "📞 *Контакты:*",
-              config.barberPhone || "+7 XXX XXX-XX-XX",
+              barberPhone,
             ].join("\n");
 
             try {

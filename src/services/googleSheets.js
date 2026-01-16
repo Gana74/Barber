@@ -377,6 +377,114 @@ async function createSheetsService(config) {
     return true;
   }
 
+  async function getBarberPhone() {
+    const settings = await getSettings();
+    return settings.телефон_барбера || "";
+  }
+
+  async function getBarberAddress() {
+    const settings = await getSettings();
+    return settings.адрес_барбера || "";
+  }
+
+  async function setBarberPhone(phone) {
+    if (!phone || typeof phone !== "string" || phone.trim().length === 0) {
+      throw new Error("Телефон не может быть пустым");
+    }
+
+    const trimmedPhone = phone.trim();
+
+    // Получаем все настройки
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.SETTINGS}!A2:B100`,
+    });
+
+    const rows = res.data.values || [];
+    let found = false;
+    let rowIndex = -1;
+
+    // Ищем существующую запись
+    for (let i = 0; i < rows.length; i++) {
+      const [key] = rows[i];
+      if (key && typeof key === "string" && key.trim() === "телефон_барбера") {
+        found = true;
+        rowIndex = i + 2;
+        break;
+      }
+    }
+
+    if (found) {
+      // Обновляем существующую запись
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!B${rowIndex}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[trimmedPhone]] },
+      });
+    } else {
+      // Добавляем новую запись
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [["телефон_барбера", trimmedPhone]] },
+      });
+    }
+
+    return true;
+  }
+
+  async function setBarberAddress(address) {
+    if (!address || typeof address !== "string" || address.trim().length === 0) {
+      throw new Error("Адрес не может быть пустым");
+    }
+
+    const trimmedAddress = address.trim();
+
+    // Получаем все настройки
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.SETTINGS}!A2:B100`,
+    });
+
+    const rows = res.data.values || [];
+    let found = false;
+    let rowIndex = -1;
+
+    // Ищем существующую запись
+    for (let i = 0; i < rows.length; i++) {
+      const [key] = rows[i];
+      if (key && typeof key === "string" && key.trim() === "адрес_барбера") {
+        found = true;
+        rowIndex = i + 2;
+        break;
+      }
+    }
+
+    if (found) {
+      // Обновляем существующую запись
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!B${rowIndex}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[trimmedAddress]] },
+      });
+    } else {
+      // Добавляем новую запись
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [["адрес_барбера", trimmedAddress]] },
+      });
+    }
+
+    return true;
+  }
+
   async function ensureSheetsStructure() {
     const meta = await sheets.spreadsheets.get({
       spreadsheetId: config.google.sheetsId,
@@ -1645,6 +1753,10 @@ async function createSheetsService(config) {
     set21DayReminderMessage,
     getTipsLink,
     setTipsLink,
+    getBarberPhone,
+    getBarberAddress,
+    setBarberPhone,
+    setBarberAddress,
     getDaySchedule,
     appendAppointment,
     updateAppointmentStatus,

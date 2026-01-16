@@ -408,6 +408,7 @@ function createBot({ config, sheetsService, calendarService }) {
     ["Управление услугами"],
     ["Редактировать напоминание 21 день"],
     ["Редактировать ссылку на чаевые"],
+    ["Изменить контакты"],
     ["Назад в админ-меню"],
   ]).resize();
 
@@ -484,6 +485,7 @@ function createBot({ config, sheetsService, calendarService }) {
       "broadcast",
       "edit_21day_reminder",
       "edit_tips_link",
+      "edit_contacts",
     ]);
 
     if (inputActions.has(action)) {
@@ -501,6 +503,8 @@ function createBot({ config, sheetsService, calendarService }) {
           ? "Отправьте новый текст для напоминания через 21 день. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel"
           : action === "edit_tips_link"
           ? "Отправьте новую ссылку на чаевые (должна начинаться с http://, https:// или t.me/). Для отмены напишите /admin_cancel"
+          : action === "edit_contacts"
+          ? "Отправьте контакты в формате:\nТелефон (первая строка)\nАдрес (вторая строка)\n\nДля отмены напишите /admin_cancel"
           : "Неизвестное действие"
       );
       return;
@@ -591,6 +595,27 @@ function createBot({ config, sheetsService, calendarService }) {
         await handleAdminAction(ctx, "edit_tips_link");
       } catch (err) {
         await ctx.reply(`Ошибка при получении текущей ссылки: ${err.message}`);
+      }
+    }
+  });
+
+  bot.hears("Изменить контакты", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      // Показываем текущие контакты
+      try {
+        const currentPhone = await sheetsService.getBarberPhone();
+        const currentAddress = await sheetsService.getBarberAddress();
+        await ctx.reply(
+          `Текущие контакты:\n\n📞 Телефон: ${
+            currentPhone || "не установлен"
+          }\n📍 Адрес: ${
+            currentAddress || "не установлен"
+          }\n\nОтправьте новые контакты в формате:\nТелефон (первая строка)\nАдрес (вторая строка)\n\nДля отмены напишите /admin_cancel`
+        );
+        await handleAdminAction(ctx, "edit_contacts");
+      } catch (err) {
+        await ctx.reply(`Ошибка при получении текущих контактов: ${err.message}`);
       }
     }
   });
@@ -1426,6 +1451,65 @@ function createBot({ config, sheetsService, calendarService }) {
         logError(
           ctx.from.id,
           "admin_edit_tips_link",
+          { error: err.message },
+          "error"
+        );
+        return;
+      }
+
+      delete ctx.session.adminAction;
+      return;
+    }
+
+    if (action === "edit_contacts") {
+      const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+      
+      if (lines.length < 2) {
+        await ctx.reply(
+          "Необходимо указать телефон и адрес в двух строках:\nПервая строка - телефон\nВторая строка - адрес\n\n/admin_cancel для отмены."
+        );
+        return;
+      }
+
+      const phone = lines[0];
+      const address = lines.slice(1).join(" "); // Объединяем остальные строки в адрес
+
+      if (!phone || phone.trim().length === 0) {
+        await ctx.reply(
+          "Телефон не может быть пустым. /admin_cancel для отмены."
+        );
+        return;
+      }
+
+      if (!address || address.trim().length === 0) {
+        await ctx.reply(
+          "Адрес не может быть пустым. /admin_cancel для отмены."
+        );
+        return;
+      }
+
+      try {
+        await sheetsService.setBarberPhone(phone.trim());
+        await sheetsService.setBarberAddress(address.trim());
+
+        // Логирование действия админа
+        logAdminAction(
+          ctx.from.id,
+          "admin_edit_contacts",
+          { phoneLength: phone.trim().length, addressLength: address.trim().length },
+          "success"
+        );
+
+        await ctx.reply(
+          `Контакты успешно обновлены!\n\n📞 Телефон: ${phone.trim()}\n📍 Адрес: ${address.trim()}`
+        );
+      } catch (err) {
+        await ctx.reply(
+          `Ошибка при сохранении контактов: ${err.message}\n/admin_cancel для отмены.`
+        );
+        logError(
+          ctx.from.id,
+          "admin_edit_contacts",
           { error: err.message },
           "error"
         );
