@@ -379,12 +379,12 @@ async function createSheetsService(config) {
 
   async function getBarberPhone() {
     const settings = await getSettings();
-    return settings.телефон_барбера || "";
+    return settings.телефон_мастера || "";
   }
 
   async function getBarberAddress() {
     const settings = await getSettings();
-    return settings.адрес_барбера || "";
+    return settings.адрес_мастера || "";
   }
 
   async function setBarberPhone(phone) {
@@ -407,7 +407,7 @@ async function createSheetsService(config) {
     // Ищем существующую запись
     for (let i = 0; i < rows.length; i++) {
       const [key] = rows[i];
-      if (key && typeof key === "string" && key.trim() === "телефон_барбера") {
+      if (key && typeof key === "string" && key.trim() === "телефон_мастера") {
         found = true;
         rowIndex = i + 2;
         break;
@@ -429,7 +429,7 @@ async function createSheetsService(config) {
         range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
         valueInputOption: "RAW",
         insertDataOption: "INSERT_ROWS",
-        requestBody: { values: [["телефон_барбера", trimmedPhone]] },
+        requestBody: { values: [["телефон_мастера", trimmedPhone]] },
       });
     }
 
@@ -437,7 +437,11 @@ async function createSheetsService(config) {
   }
 
   async function setBarberAddress(address) {
-    if (!address || typeof address !== "string" || address.trim().length === 0) {
+    if (
+      !address ||
+      typeof address !== "string" ||
+      address.trim().length === 0
+    ) {
       throw new Error("Адрес не может быть пустым");
     }
 
@@ -456,7 +460,7 @@ async function createSheetsService(config) {
     // Ищем существующую запись
     for (let i = 0; i < rows.length; i++) {
       const [key] = rows[i];
-      if (key && typeof key === "string" && key.trim() === "адрес_барбера") {
+      if (key && typeof key === "string" && key.trim() === "адрес_мастера") {
         found = true;
         rowIndex = i + 2;
         break;
@@ -478,7 +482,7 @@ async function createSheetsService(config) {
         range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
         valueInputOption: "RAW",
         insertDataOption: "INSERT_ROWS",
-        requestBody: { values: [["адрес_барбера", trimmedAddress]] },
+        requestBody: { values: [["адрес_мастера", trimmedAddress]] },
       });
     }
 
@@ -1716,7 +1720,11 @@ async function createSheetsService(config) {
       }
     });
 
-    if (workHoursCache && workHoursCache.expiresAt && workHoursCache.expiresAt < now) {
+    if (
+      workHoursCache &&
+      workHoursCache.expiresAt &&
+      workHoursCache.expiresAt < now
+    ) {
       workHoursCache = { byDate: {}, byWeekday: {}, expiresAt: 0 };
     }
 
