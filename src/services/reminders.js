@@ -21,6 +21,7 @@ const cronLocks = {
   autoComplete: false,
   reminder21Day: false,
   sessionCleanup: false,
+  broadcastMarkReset: false,
 };
 
 // Очистка старых ID каждый день в полночь
@@ -568,6 +569,36 @@ function setupReminders({
         console.error("Critical error during nightly session cleanup:", err);
       } finally {
         cronLocks.sessionCleanup = false;
+      }
+    },
+    {
+      timezone: config.defaultTimezone,
+    }
+  );
+
+  // Сброс меток рассылки каждую неделю по понедельникам в 00:00 по таймзоне салона
+  cron.schedule(
+    "0 0 * * 1",
+    async () => {
+      // Блокировка одновременного выполнения
+      if (cronLocks.broadcastMarkReset) {
+        console.log("Сброс меток рассылки уже выполняется, пропускаем");
+        return;
+      }
+      cronLocks.broadcastMarkReset = true;
+      try {
+        if (!sheetsService || !sheetsService.clearBroadcastMarks) {
+          console.log("Сервис clearBroadcastMarks недоступен, пропускаем сброс меток");
+          return;
+        }
+        const clearedCount = await sheetsService.clearBroadcastMarks();
+        console.log(
+          `[reminders] Сброс меток рассылки завершен. Очищено меток: ${clearedCount}`
+        );
+      } catch (err) {
+        console.error("Ошибка при сбросе меток рассылки:", err);
+      } finally {
+        cronLocks.broadcastMarkReset = false;
       }
     },
     {

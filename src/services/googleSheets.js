@@ -58,6 +58,7 @@ const HEADERS = {
     "BanStatus",
     "BanReason",
     "Напоминание_21день_UTC",
+    "Последняя_рассылка_UTC",
   ],
   [SHEET_NAMES.WORKHOURS]: [
     "Дата",
@@ -786,7 +787,7 @@ async function createSheetsService(config) {
 
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.CLIENTS}!A2:K2000`,
+      range: `${SHEET_NAMES.CLIENTS}!A2:L2000`,
     });
     const rows = res.data.values || [];
 
@@ -808,7 +809,7 @@ async function createSheetsService(config) {
 
       await sheets.spreadsheets.values.append({
         spreadsheetId: config.google.sheetsId,
-        range: `${SHEET_NAMES.CLIENTS}!A2:K2`,
+        range: `${SHEET_NAMES.CLIENTS}!A2:L2`,
         valueInputOption: "RAW",
         insertDataOption: "INSERT_ROWS",
         requestBody: {
@@ -825,6 +826,7 @@ async function createSheetsService(config) {
               "", // BanStatus
               "", // BanReason
               "", // Напоминание_21день_UTC
+              "", // Последняя_рассылка_UTC
             ],
           ],
         },
@@ -835,7 +837,7 @@ async function createSheetsService(config) {
       const rowValues = rows[targetRowIndex];
 
       // Убедимся, что массив достаточно длинный
-      while (rowValues.length < 11) {
+      while (rowValues.length < 12) {
         rowValues.push("");
       }
 
@@ -845,10 +847,11 @@ async function createSheetsService(config) {
       rowValues[6] = lastAppointmentAtUtc || rowValues[6] || "";
       rowValues[7] = existingTotal + 1;
       // Напоминание_21день_UTC (индекс 10) не обновляем при upsert
+      // Последняя_рассылка_UTC (индекс 11) не обновляем при upsert
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: config.google.sheetsId,
-        range: `${SHEET_NAMES.CLIENTS}!A${rowNumber}:K${rowNumber}`,
+        range: `${SHEET_NAMES.CLIENTS}!A${rowNumber}:L${rowNumber}`,
         valueInputOption: "RAW",
         requestBody: {
           values: [rowValues],
@@ -1119,7 +1122,7 @@ async function createSheetsService(config) {
   async function getAllClients() {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.CLIENTS}!A2:K2000`,
+      range: `${SHEET_NAMES.CLIENTS}!A2:L2000`,
     });
     const rows = res.data.values || [];
 
@@ -1136,6 +1139,7 @@ async function createSheetsService(config) {
         BanStatus,
         BanReason,
         Напоминание_21день_UTC,
+        Последняя_рассылка_UTC,
       ] = row;
       return {
         id: ID_клиента,
@@ -1149,14 +1153,151 @@ async function createSheetsService(config) {
         banned: String(BanStatus || "").toLowerCase() === "banned",
         banReason: BanReason || "",
         reminder21DaySentAtUtc: Напоминание_21день_UTC || "",
+        lastBroadcastSentAtUtc: Последняя_рассылка_UTC || "",
       };
     });
+  }
+
+  async function getClientsForBroadcast() {
+    // Комментарий: возвращает клиентов, которым можно отправить рассылку
+    // Исключает тех, кому уже отправляли менее 24 часов назад
+    const clients = await getAllClients();
+    const now = dayjs().utc();
+    const hours24 = 24 * 60 * 60 * 1000; // 24 часа в миллисекундах
+
+    return clients.filter((client) => {
+      // Исключаем клиентов без telegramId
+      if (!client.telegramId) {
+        return false;
+      }
+
+      // Исключаем забаненных
+      if (client.banned) {
+        return false;
+      }
+
+      // Если метка пуста - клиент доступен
+      if (!client.lastBroadcastSentAtUtc || client.lastBroadcastSentAtUtc.trim() === "") {
+        return true;
+      }
+
+      // Проверяем, прошло ли 24 часа с последней рассылки
+      try {
+        const lastSent = dayjs.utc(client.lastBroadcastSentAtUtc);
+        const diffMs = now.diff(lastSent);
+        return diffMs >= hours24;
+      } catch (e) {
+        // Если ошибка парсинга - считаем клиента доступным
+        return true;
+      }
+    });
+  }
+
+  async function markBroadcastSent(telegramIds) {
+    // Комментарий: отмечает клиентов меткой времени рассылки (массовое обновление)
+    if (!Array.isArray(telegramIds) || telegramIds.length === 0) {
+      return true;
+    }
+
+    const telegramIdsStr = telegramIds.map(String);
+    const now = dayjs().utc().toISOString();
+
+    // Получаем все клиенты
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.CLIENTS}!A2:L2000`,
+    });
+    const rows = res.data.values || [];
+
+    // Находим строки для обновления
+    const updates = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const telegramId = row[2]; // Telegram_ID в индексе 2
+      
+      if (telegramId && telegramIdsStr.includes(String(telegramId))) {
+        const rowNumber = i + 2; // +2 из-за заголовка и сдвига индекса
+        // Убедимся, что массив достаточно длинный
+        while (row.length < 12) {
+          row.push("");
+        }
+        // Обновляем колонку L (индекс 11) - Последняя_рассылка_UTC
+        row[11] = now;
+        updates.push({ rowNumber, row });
+      }
+    }
+
+    // Массовое обновление (батчинг по 100 строк для надежности)
+    for (let i = 0; i < updates.length; i += 100) {
+      const batch = updates.slice(i, i + 100);
+      const batchRequests = batch.map(({ rowNumber, row }) => ({
+        updateCells: {
+          range: {
+            sheetId: undefined, // Используется имя листа в range
+            startRowIndex: rowNumber - 1,
+            endRowIndex: rowNumber,
+            startColumnIndex: 11, // Колонка L (индекс 11)
+            endColumnIndex: 12,
+          },
+          values: [[now]],
+          fields: "userEnteredValue",
+        },
+      }));
+
+      // Обновляем по одной строке (Google Sheets API требует имя листа)
+      for (const { rowNumber } of batch) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: config.google.sheetsId,
+          range: `${SHEET_NAMES.CLIENTS}!L${rowNumber}`,
+          valueInputOption: "RAW",
+          requestBody: {
+            values: [[now]],
+          },
+        });
+      }
+    }
+
+    return true;
+  }
+
+  async function clearBroadcastMarks() {
+    // Комментарий: очищает все метки рассылки (для cron задачи)
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.CLIENTS}!A2:L2000`,
+    });
+    const rows = res.data.values || [];
+
+    // Находим все строки с заполненной меткой
+    const rowsToClear = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      // Проверяем, что метка заполнена (индекс 11)
+      if (row.length > 11 && row[11] && row[11].trim() !== "") {
+        const rowNumber = i + 2;
+        rowsToClear.push(rowNumber);
+      }
+    }
+
+    // Очищаем метки пакетами (по одной для надежности)
+    for (const rowNumber of rowsToClear) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.CLIENTS}!L${rowNumber}`,
+        valueInputOption: "RAW",
+        requestBody: {
+          values: [[""]],
+        },
+      });
+    }
+
+    return rowsToClear.length;
   }
 
   async function getClientByTelegramId(telegramId) {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.CLIENTS}!A2:K2000`,
+      range: `${SHEET_NAMES.CLIENTS}!A2:L2000`,
     });
     const rows = res.data.values || [];
 
@@ -1186,7 +1327,7 @@ async function createSheetsService(config) {
   async function setUserBanStatus(telegramId, banned, reason = "") {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.CLIENTS}!A2:K2000`,
+      range: `${SHEET_NAMES.CLIENTS}!A2:L2000`,
     });
     const rows = res.data.values || [];
 
@@ -1272,6 +1413,9 @@ async function createSheetsService(config) {
 
   async function getClientsFor21DayReminder() {
     // Комментарий: получаем клиентов, которым нужно отправить напоминание
+    console.log(
+      `[getClientsFor21DayReminder] Начало проверки в ${dayjs().utc().toISOString()}`
+    );
     const clients = await getAllClients();
     const allAppointments = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
@@ -1321,6 +1465,10 @@ async function createSheetsService(config) {
 
     const now = dayjs().utc();
     const clientsForReminder = [];
+
+    console.log(
+      `[getClientsFor21DayReminder] Проверка ${clients.length} клиентов, текущее время UTC: ${now.toISOString()}`
+    );
 
     for (const client of clients) {
       // Проверяем базовые условия
@@ -1376,10 +1524,18 @@ async function createSheetsService(config) {
       }
 
       // Вычисляем разницу в днях
-      const daysSinceLastHaircut = now.diff(lastHaircutDate, "day");
+      // Используем разницу в миллисекундах и делим на количество миллисекунд в дне
+      // Это более точный расчет, чем dayjs.diff с "day", который округляет вниз
+      const diffMs = now.valueOf() - lastHaircutDate.valueOf();
+      const diffDays = diffMs / (24 * 60 * 60 * 1000);
+      const daysSinceLastHaircut = Math.floor(diffDays);
 
-      // Проверяем, что прошло >= 21 день
-      if (daysSinceLastHaircut >= 21) {
+      // Проверяем, что прошло >= 21 день (21 * 24 часа = 504 часа)
+      // Используем точное сравнение: если прошло 21 день или больше (>= 21 * 24 часа)
+      if (diffDays >= 21) {
+        console.log(
+          `[getClientsFor21DayReminder] Клиент ${client.telegramId}: последняя запись ${lastHaircutDate.toISOString()}, прошло ${diffDays.toFixed(2)} дней (${daysSinceLastHaircut} полных дней)`
+        );
         clientsForReminder.push({
           ...client,
           daysSinceLastHaircut,
@@ -1388,6 +1544,10 @@ async function createSheetsService(config) {
       }
     }
 
+    console.log(
+      `[getClientsFor21DayReminder] Найдено клиентов для напоминания: ${clientsForReminder.length}`
+    );
+
     return clientsForReminder;
   }
 
@@ -1395,7 +1555,7 @@ async function createSheetsService(config) {
     // Комментарий: помечаем, что напоминание отправлено
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.CLIENTS}!A2:K2000`,
+      range: `${SHEET_NAMES.CLIENTS}!A2:L2000`,
     });
     const rows = res.data.values || [];
 
@@ -1431,7 +1591,7 @@ async function createSheetsService(config) {
     // Комментарий: очищаем поле напоминания при создании новой записи
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.CLIENTS}!A2:K2000`,
+      range: `${SHEET_NAMES.CLIENTS}!A2:L2000`,
     });
     const rows = res.data.values || [];
 
@@ -1775,6 +1935,9 @@ async function createSheetsService(config) {
     getAppointmentById,
     getAppointmentByCancelCode,
     getAllClients,
+    getClientsForBroadcast,
+    markBroadcastSent,
+    clearBroadcastMarks,
     getWorkHoursForDate,
     invalidateWorkHoursCache,
     getClientByTelegramId,

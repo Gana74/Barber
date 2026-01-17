@@ -397,7 +397,7 @@ function createBot({ config, sheetsService, calendarService }) {
     ["Просмотр записей", "Статистика"],
     ["Отменить запись (по коду)"],
     ["Массовая рассылка"],
-    ["📊 Финансовая статистика"],
+    ["📊 Финансовая статистика", "📊 Статус рассылки"],
     ["⚙️ Настройки"],
     ["Вернуться в пользовательский режим"],
   ]).resize();
@@ -559,6 +559,62 @@ function createBot({ config, sheetsService, calendarService }) {
     if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       await handleAdminAction(ctx, "broadcast");
+    }
+  });
+
+  bot.hears("📊 Статус рассылки", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode !== "admin") return;
+
+    try {
+      // Получаем клиентов для рассылки (доступные сегодня)
+      const clientsForBroadcast = sheetsService.getClientsForBroadcast
+        ? await sheetsService.getClientsForBroadcast()
+        : [];
+
+      // Получаем всех клиентов
+      const allClients = await sheetsService.getAllClients();
+      const allClientsWithTelegram = allClients.filter((c) => c && c.telegramId);
+
+      // Вычисляем следующий понедельник для сброса меток
+      const timezone = await sheetsService.getTimezone();
+      const nowTz = dayjs().tz(timezone);
+      let nextMonday = nowTz.day(1); // Понедельник текущей недели
+      if (nextMonday.isBefore(nowTz) || nextMonday.isSame(nowTz, "day")) {
+        // Если понедельник уже прошел или сегодня понедельник после 00:00
+        nextMonday = nextMonday.add(7, "day");
+      }
+      // Устанавливаем время на 00:00
+      nextMonday = nextMonday.hour(0).minute(0).second(0).millisecond(0);
+
+      const availableToday = clientsForBroadcast.length;
+      const totalClients = allClientsWithTelegram.length;
+      const waitingCount = Math.max(0, totalClients - availableToday);
+
+      // Форматируем дату следующего сброса
+      const nextResetDate = nextMonday.format("DD.MM.YYYY HH:mm");
+
+      const MAX_RECIPIENTS = 250;
+      const canSendToday = Math.min(availableToday, MAX_RECIPIENTS);
+      const remainingToday = Math.max(0, availableToday - MAX_RECIPIENTS);
+
+      let message = `📊 Статус рассылки\n\n`;
+      message += `📤 Доступно сегодня: ${canSendToday} из ${MAX_RECIPIENTS}\n`;
+      if (remainingToday > 0) {
+        message += `⏳ Ожидают (после лимита): ${remainingToday}\n`;
+      }
+      message += `👥 Всего клиентов: ${totalClients}\n`;
+      if (waitingCount > 0) {
+        message += `⏱ Ожидают рассылки: ${waitingCount}\n`;
+      }
+      message += `🔄 Следующий сброс меток: ${nextResetDate} (${timezone})\n`;
+
+      await ctx.reply(message);
+    } catch (err) {
+      console.error("Ошибка при получении статуса рассылки:", err);
+      await ctx.reply(
+        `Ошибка при получении статуса рассылки: ${err.message}`
+      );
     }
   });
 
@@ -1541,9 +1597,13 @@ function createBot({ config, sheetsService, calendarService }) {
         return;
       }
 
-      const clients = await sheetsService.getAllClients();
+      // Используем getClientsForBroadcast() для получения клиентов, которым можно отправить сегодня
+      const clientsForBroadcast = sheetsService.getClientsForBroadcast
+        ? await sheetsService.getClientsForBroadcast()
+        : await sheetsService.getAllClients();
+      
       const bans = await adminService.getBans();
-      const recipients = clients
+      const recipients = clientsForBroadcast
         .filter((c) => c && c.telegramId)
         .map((c) => String(c.telegramId))
         .filter((id) => id && !bans.some((b) => String(b) === String(id)));
@@ -1556,23 +1616,22 @@ function createBot({ config, sheetsService, calendarService }) {
         return;
       }
 
+      // Получаем общее количество клиентов для информации
+      const allClients = await sheetsService.getAllClients();
+      const allClientsWithTelegram = allClients.filter((c) => c && c.telegramId).length;
+
       // Проверка максимального количества получателей (250)
       const MAX_RECIPIENTS = 250;
-      if (recipients.length > MAX_RECIPIENTS) {
-        await ctx.reply(
-          `Превышен лимит получателей: ${recipients.length} (максимум ${MAX_RECIPIENTS}). Ограничьте список получателей.`
-        );
-        delete ctx.session.adminAction;
-        return;
-      }
+      const recipientsToSend = recipients.slice(0, MAX_RECIPIENTS);
+      const waitingCount = Math.max(0, allClientsWithTelegram - recipients.length);
 
       ctx.session.adminAction = {
         type: "broadcast",
         payload: { kind: "text", text: sanitizedMessage },
-        recipients,
+        recipients: recipientsToSend,
       };
 
-      const sample = recipients.slice(0, 6).join(", ");
+      const sample = recipientsToSend.slice(0, 6).join(", ");
       const keyboard = Markup.inlineKeyboard([
         [
           Markup.button.callback(
@@ -1583,10 +1642,17 @@ function createBot({ config, sheetsService, calendarService }) {
         [Markup.button.callback("Отменить ❌", "admin:broadcast_cancel")],
       ]);
 
-      await ctx.reply(
-        `Предпросмотр рассылки:\n\nТекст:\n${message}\n\nПолучателей: ${recipients.length}\nПримеры: ${sample}\n\nПодтвердите отправку или отмените.`,
-        keyboard
-      );
+      let previewMessage = `Предпросмотр рассылки:\n\nТекст:\n${message}\n\n`;
+      previewMessage += `📤 Отправлено сегодня: ${recipientsToSend.length} из ${MAX_RECIPIENTS}\n`;
+      if (waitingCount > 0) {
+        previewMessage += `⏳ Ожидают рассылки: ${waitingCount}\n`;
+      }
+      if (recipients.length > MAX_RECIPIENTS) {
+        previewMessage += `⚠️ Всего доступно: ${recipients.length}. Будет отправлено ${MAX_RECIPIENTS}, остальные получат рассылку завтра.\n`;
+      }
+      previewMessage += `\nПримеры получателей: ${sample}\n\nПодтвердите отправку или отмените.`;
+
+      await ctx.reply(previewMessage, keyboard);
 
       return;
     }
@@ -1609,9 +1675,13 @@ function createBot({ config, sheetsService, calendarService }) {
     const fileId = best.file_id;
     const caption = (ctx.message.caption || "").trim();
 
-    const clients = await sheetsService.getAllClients();
+    // Используем getClientsForBroadcast() для получения клиентов, которым можно отправить сегодня
+    const clientsForBroadcast = sheetsService.getClientsForBroadcast
+      ? await sheetsService.getClientsForBroadcast()
+      : await sheetsService.getAllClients();
+    
     const bans = await adminService.getBans();
-    const recipients = clients
+    const recipients = clientsForBroadcast
       .filter((c) => c && c.telegramId)
       .map((c) => String(c.telegramId))
       .filter((id) => id && !bans.some((b) => String(b) === String(id)));
@@ -1624,13 +1694,22 @@ function createBot({ config, sheetsService, calendarService }) {
       return;
     }
 
+    // Получаем общее количество клиентов для информации
+    const allClients = await sheetsService.getAllClients();
+    const allClientsWithTelegram = allClients.filter((c) => c && c.telegramId).length;
+
+    // Проверка максимального количества получателей (250)
+    const MAX_RECIPIENTS = 250;
+    const recipientsToSend = recipients.slice(0, MAX_RECIPIENTS);
+    const waitingCount = Math.max(0, allClientsWithTelegram - recipients.length);
+
     ctx.session.adminAction = {
       type: "broadcast",
       payload: { kind: "photo", fileId, caption },
-      recipients,
+      recipients: recipientsToSend,
     };
 
-    const sample = recipients.slice(0, 6).join(", ");
+    const sample = recipientsToSend.slice(0, 6).join(", ");
     const keyboard = Markup.inlineKeyboard([
       [
         Markup.button.callback(
@@ -1646,10 +1725,17 @@ function createBot({ config, sheetsService, calendarService }) {
         (caption ? `\n${caption}` : " (без подписи)")
     );
     await ctx.replyWithPhoto(fileId);
-    await ctx.reply(
-      `Получателей: ${recipients.length}\nПримеры: ${sample}\n\nПодтвердите отправку или отмените.`,
-      keyboard
-    );
+    
+    let previewMessage = `📤 Отправлено сегодня: ${recipientsToSend.length} из ${MAX_RECIPIENTS}\n`;
+    if (waitingCount > 0) {
+      previewMessage += `⏳ Ожидают рассылки: ${waitingCount}\n`;
+    }
+    if (recipients.length > MAX_RECIPIENTS) {
+      previewMessage += `⚠️ Всего доступно: ${recipients.length}. Будет отправлено ${MAX_RECIPIENTS}, остальные получат рассылку завтра.\n`;
+    }
+    previewMessage += `\nПримеры получателей: ${sample}\n\nПодтвердите отправку или отмените.`;
+    
+    await ctx.reply(previewMessage, keyboard);
   });
 
   return bot;

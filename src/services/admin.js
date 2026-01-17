@@ -75,7 +75,6 @@ async function broadcastToClients(bot, sheetsService, payload, options = 200) {
   // options: { recipients: string[] | null, throttleMs: number, skipBanned: boolean }
   const MAX_RECIPIENTS = 250; // Максимальное количество получателей
   
-  const clientsAll = await sheetsService.getAllClients();
   const results = [];
 
   // Normalize options for backward compatibility (old style: throttleMs number or object)
@@ -93,24 +92,30 @@ async function broadcastToClients(bot, sheetsService, payload, options = 200) {
 
   const bans = await readBans();
 
-  // Build targets: either from recipients array or from clientsAll with telegramId
+  // Build targets: either from recipients array or from clientsForBroadcast with telegramId
+  // Если передан явный список получателей - используем его, иначе используем getClientsForBroadcast()
   const targets = [];
   if (recipients && recipients.length) {
     recipients.forEach((id) => targets.push({ telegramId: String(id) }));
   } else {
-    clientsAll.forEach((c) => {
+    // Используем getClientsForBroadcast() вместо getAllClients() для автоматической фильтрации
+    const clientsForBroadcast = await sheetsService.getClientsForBroadcast();
+    clientsForBroadcast.forEach((c) => {
       if (c && c.telegramId) targets.push({ telegramId: String(c.telegramId) });
     });
   }
 
-  // Ограничение максимального количества получателей
+  // Ограничение максимального количества получателей - берем первые 250
+  const targetsToSend = targets.slice(0, MAX_RECIPIENTS);
+  
   if (targets.length > MAX_RECIPIENTS) {
-    throw new Error(
-      `Превышен лимит получателей: ${targets.length} (максимум ${MAX_RECIPIENTS})`
-    );
+    // Предупреждение будет показано в предпросмотре, здесь просто ограничиваем
   }
 
-  for (const c of targets) {
+  // Список успешно отправленных для отметки
+  const sentIds = [];
+
+  for (const c of targetsToSend) {
     const tid = String(c.telegramId || "");
     if (!tid) continue;
 
@@ -142,10 +147,21 @@ async function broadcastToClients(bot, sheetsService, payload, options = 200) {
         await bot.telegram.sendMessage(tid, text);
       }
       results.push({ id: tid, ok: true });
+      sentIds.push(tid);
     } catch (e) {
       results.push({ id: tid, ok: false, error: e.message });
     }
     if (optsThrottle) await new Promise((r) => setTimeout(r, optsThrottle));
+  }
+
+  // Отмечаем успешно отправленных клиентов меткой рассылки
+  if (sentIds.length > 0 && sheetsService && sheetsService.markBroadcastSent) {
+    try {
+      await sheetsService.markBroadcastSent(sentIds);
+    } catch (e) {
+      // Логируем ошибку, но не прерываем выполнение
+      console.error("Ошибка при отметке клиентов в рассылке:", e.message || e);
+    }
   }
 
   return results;
