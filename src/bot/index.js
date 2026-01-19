@@ -605,7 +605,7 @@ function createBot({ config, sheetsService, calendarService }) {
       }
       message += `👥 Всего клиентов: ${totalClients}\n`;
       if (waitingCount > 0) {
-        message += `⏱ Ожидают рассылки: ${waitingCount}\n`;
+        message += `⏱ Отправленных за последние 24 часа: ${waitingCount}\n`;
       }
       message += `🔄 Следующий сброс меток: ${nextResetDate} (${timezone})\n`;
 
@@ -1643,14 +1643,13 @@ function createBot({ config, sheetsService, calendarService }) {
       ]);
 
       let previewMessage = `Предпросмотр рассылки:\n\nТекст:\n${message}\n\n`;
-      previewMessage += `📤 Отправлено сегодня: ${recipientsToSend.length} из ${MAX_RECIPIENTS}\n`;
+      previewMessage += `📤 Будет отправлено сегодня: ${recipientsToSend.length} из ${MAX_RECIPIENTS}\n`;
       if (waitingCount > 0) {
-        previewMessage += `⏳ Ожидают рассылки: ${waitingCount}\n`;
+        previewMessage += `⏳ Заблокированных пользователей: ${waitingCount}\n`;
       }
       if (recipients.length > MAX_RECIPIENTS) {
         previewMessage += `⚠️ Всего доступно: ${recipients.length}. Будет отправлено ${MAX_RECIPIENTS}, остальные получат рассылку завтра.\n`;
       }
-      previewMessage += `\nПримеры получателей: ${sample}\n\nПодтвердите отправку или отмените.`;
 
       await ctx.reply(previewMessage, keyboard);
 
@@ -1726,14 +1725,14 @@ function createBot({ config, sheetsService, calendarService }) {
     );
     await ctx.replyWithPhoto(fileId);
     
-    let previewMessage = `📤 Отправлено сегодня: ${recipientsToSend.length} из ${MAX_RECIPIENTS}\n`;
+    let previewMessage = `📤 Будет отправлено сегодня: ${recipientsToSend.length} из ${MAX_RECIPIENTS}\n`;
     if (waitingCount > 0) {
-      previewMessage += `⏳ Ожидают рассылки: ${waitingCount}\n`;
+      previewMessage += `⏳ Заблокированных пользователей: ${waitingCount}\n`;
     }
     if (recipients.length > MAX_RECIPIENTS) {
       previewMessage += `⚠️ Всего доступно: ${recipients.length}. Будет отправлено ${MAX_RECIPIENTS}, остальные получат рассылку завтра.\n`;
     }
-    previewMessage += `\nПримеры получателей: ${sample}\n\nПодтвердите отправку или отмените.`;
+  
     
     await ctx.reply(previewMessage, keyboard);
   });

@@ -143,24 +143,7 @@ function setupReminders({
           )}] Напоминания за день записи отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`
         );
 
-        // Отправляем отчет менеджеру если настроен
-        if (config.managerChatId && (sentCount > 0 || errorCount > 0)) {
-          const reportMsg = [
-            "📊 *Отчет по напоминаниям за день записи*",
-            `📅 Дата: ${tomorrow}`,
-            `✅ Отправлено: ${sentCount}`,
-            `❌ Ошибок: ${errorCount}`,
-            `⏰ Время отправки: ${dayjs().tz(timezone).format("HH:mm:ss")}`,
-          ].join("\n");
-
-          try {
-            await bot.telegram.sendMessage(config.managerChatId, reportMsg, {
-              parse_mode: "Markdown",
-            });
-          } catch (err) {
-            console.error("Ошибка отправки отчета менеджеру:", err.message);
-          }
-        }
+        
       } catch (err) {
         console.error("Критическая ошибка в напоминаниях за день записи:", err);
       } finally {
@@ -416,26 +399,7 @@ function setupReminders({
           );
         }
 
-        // Отправляем отчет менеджеру если настроен и были завершения
-        if (config.managerChatId && completedCount > 0) {
-          const reportMsg = [
-            "✅ *Отчет по автоматическому завершению записей*",
-            `📅 Дата: ${formatDate(nowTz.format("YYYY-MM-DD"))}`,
-            `⏰ Время: ${nowTz.format("HH:mm:ss")}`,
-            `✅ Завершено записей: ${completedCount}`,
-            errorCount > 0 ? `❌ Ошибок: ${errorCount}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n");
-
-          try {
-            await bot.telegram.sendMessage(config.managerChatId, reportMsg, {
-              parse_mode: "Markdown",
-            });
-          } catch (err) {
-            console.error("Ошибка отправки отчета менеджеру:", err.message);
-          }
-        }
+        
       } catch (err) {
         console.error(
           "Критическая ошибка в автоматическом завершении записей:",
@@ -524,24 +488,7 @@ function setupReminders({
           )}] Напоминания 21 день отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`
         );
 
-        // Отправляем отчет менеджеру если настроен
-        if (config.managerChatId && (sentCount > 0 || errorCount > 0)) {
-          const reportMsg = [
-            "📊 *Отчет по напоминаниям 21 день*",
-            `📅 Дата: ${nowTz.format("YYYY-MM-DD")}`,
-            `✅ Отправлено: ${sentCount}`,
-            `❌ Ошибок: ${errorCount}`,
-            `⏰ Время отправки: ${nowTz.format("HH:mm:ss")}`,
-          ].join("\n");
-
-          try {
-            await bot.telegram.sendMessage(config.managerChatId, reportMsg, {
-              parse_mode: "Markdown",
-            });
-          } catch (err) {
-            console.error("Ошибка отправки отчета менеджеру:", err.message);
-          }
-        }
+       
       } catch (err) {
         console.error("Критическая ошибка в напоминаниях 21 день:", err);
       } finally {
