@@ -3,5 +3,5 @@ node_modules/
 credentials.json
 sessions.json
 banned.json
+security.log
 logs/
-backups/
