@@ -22,7 +22,6 @@ const {
   logError,
   logAction,
 } = require("../utils/logger");
-const { scheduleBackup } = require("../utils/backup");
 const dayjs = require("dayjs");
 const timezonePlugin = require("dayjs/plugin/timezone");
 const utc = require("dayjs/plugin/utc");
@@ -85,7 +84,7 @@ function cleanupSessionsFile({ maxSessions = 150, inactiveDays = 30 } = {}) {
           encoding: "utf8",
         });
         console.log(
-          `Cleaned up sessions.json: kept ${filteredSessions.length} sessions`
+          `Cleaned up sessions.json: kept ${filteredSessions.length} sessions`,
         );
       } catch (e) {
         console.warn("Failed to write cleaned sessions.json:", e.message);
@@ -189,7 +188,7 @@ function createBot({ config, sheetsService, calendarService }) {
         // Сессия слишком большая, очищаем её
         ctx.session = {};
         console.warn(
-          `Session too large for user ${ctx.from?.id}, cleared session`
+          `Session too large for user ${ctx.from?.id}, cleared session`,
         );
       }
     }
@@ -229,7 +228,7 @@ function createBot({ config, sheetsService, calendarService }) {
       `Привет, ${name}! Я бот мастера по услугам красоты. Здесь можно записаться на стрижку.`,
       Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
         .resize()
-        .oneTime()
+        .oneTime(),
     );
   });
 
@@ -250,7 +249,7 @@ function createBot({ config, sheetsService, calendarService }) {
     const timezone = await sheetsService.getTimezone();
     const list = await sheetsService.getFutureAppointmentsForTelegram(
       ctx.from.id,
-      timezone
+      timezone,
     );
 
     if (!list.length) {
@@ -260,19 +259,19 @@ function createBot({ config, sheetsService, calendarService }) {
 
     const lines = list.map(
       (app, idx) =>
-        `${idx + 1}. ${app.service} — ${formatDate(app.date)} ${app.timeStart}`
+        `${idx + 1}. ${app.service} — ${formatDate(app.date)} ${app.timeStart}`,
     );
 
     const keyboard = list.map((app) => [
       Markup.button.callback(
         `Отменить ${formatDate(app.date)} ${app.timeStart}`,
-        `cancel_app:${app.id}`
+        `cancel_app:${app.id}`,
       ),
     ]);
 
     await ctx.reply(
       `Будущие записи:\n\n${lines.join("\n")}`,
-      Markup.inlineKeyboard(keyboard)
+      Markup.inlineKeyboard(keyboard),
     );
   });
 
@@ -305,7 +304,7 @@ function createBot({ config, sheetsService, calendarService }) {
     } catch (e) {}
     await ctx.reply(
       "Отменено. Для новой записи используй /book",
-      Markup.removeKeyboard()
+      Markup.removeKeyboard(),
     );
   });
 
@@ -323,7 +322,7 @@ function createBot({ config, sheetsService, calendarService }) {
     const appointment = await sheetsService.getAppointmentById(id);
     if (!appointment || appointment.status !== bookingService.STATUSES.ACTIVE) {
       await ctx.reply(
-        "Не удалось отменить запись: она не найдена или уже отменена."
+        "Не удалось отменить запись: она не найдена или уже отменена.",
       );
       return;
     }
@@ -337,12 +336,12 @@ function createBot({ config, sheetsService, calendarService }) {
     const ok = await sheetsService.updateAppointmentStatus(
       id,
       bookingService.STATUSES.CANCELLED,
-      { cancelledAtUtc }
+      { cancelledAtUtc },
     );
 
     if (!ok) {
       await ctx.reply(
-        "Не удалось отменить запись: она не найдена или уже отменена."
+        "Не удалось отменить запись: она не найдена или уже отменена.",
       );
       return;
     }
@@ -356,13 +355,13 @@ function createBot({ config, sheetsService, calendarService }) {
         date: appointment.date,
         time: appointment.timeStart,
       },
-      "success"
+      "success",
     );
 
     await ctx.reply(
       `Запись на ${formatDate(appointment.date)} ${
         appointment.timeStart
-      } отменена. Спасибо, что предупредил(а)!`
+      } отменена. Спасибо, что предупредил(а)!`,
     );
 
     // Попытка удалить событие в календаре
@@ -373,7 +372,7 @@ function createBot({ config, sheetsService, calendarService }) {
     } catch (e) {
       console.warn(
         "Calendar delete failed for appointment (user cancel):",
-        e.message || e
+        e.message || e,
       );
     }
 
@@ -386,7 +385,7 @@ function createBot({ config, sheetsService, calendarService }) {
           appointment.timeStart
         }–${appointment.timeEnd}\nКлиент: ${appointment.clientName}\nТелефон: ${
           appointment.phone
-        }\nКод отмены: ${appointment.cancelCode}`
+        }\nКод отмены: ${appointment.cancelCode}`,
       );
     }
   });
@@ -424,7 +423,7 @@ function createBot({ config, sheetsService, calendarService }) {
     logAdminAction(ctx.from.id, "admin_mode_enabled", {}, "success");
     await ctx.reply(
       "Включён режим администратора. Выберите действие:",
-      adminKeyboard
+      adminKeyboard,
     );
   });
 
@@ -435,7 +434,7 @@ function createBot({ config, sheetsService, calendarService }) {
       "Режим пользователя. Выберите действие:",
       Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
         .resize()
-        .oneTime()
+        .oneTime(),
     );
   });
 
@@ -454,12 +453,12 @@ function createBot({ config, sheetsService, calendarService }) {
         .map(
           (a) =>
             `Код отмены: ${a.cancelCode || "N/A"} — ${a.service} ${formatDate(
-              a.date
-            )} ${a.timeStart}-${a.timeEnd} — ${a.clientName} (${a.phone})`
+              a.date,
+            )} ${a.timeStart}-${a.timeEnd} — ${a.clientName} (${a.phone})`,
         );
       await ctx.reply(
         `Активные записи (показано ${lines.length} из ${all.length}):\n` +
-          lines.join("\n")
+          lines.join("\n"),
       );
       return;
     }
@@ -469,10 +468,10 @@ function createBot({ config, sheetsService, calendarService }) {
       const clients = await sheetsService.getAllClients();
       const upcoming = all.length;
       const uniqueClients = new Set(
-        clients.map((c) => String(c.telegramId)).filter(Boolean)
+        clients.map((c) => String(c.telegramId)).filter(Boolean),
       ).size;
       await ctx.reply(
-        `Статистика:\nАктивных записей: ${upcoming}\nКлиентов в базе: ${uniqueClients}`
+        `Статистика:\nАктивных записей: ${upcoming}\nКлиентов в базе: ${uniqueClients}`,
       );
       return;
     }
@@ -493,18 +492,18 @@ function createBot({ config, sheetsService, calendarService }) {
         action === "broadcast"
           ? "Отправьте текст для рассылки или пришлите фото с подписью. Для отмены напишите /admin_cancel"
           : action === "cancel_booking_by_code"
-          ? "Отправьте код отмены записи (например: A3K9X2). Для отмены напишите /admin_cancel"
-          : action === "ban"
-          ? "Отправьте Telegram ID или @username пользователя для бана. Для отмены напишите /admin_cancel"
-          : action === "unban"
-          ? "Отправьте Telegram ID пользователя для разбанивания. Для отмены напишите /admin_cancel"
-          : action === "edit_21day_reminder"
-          ? "Отправьте новый текст для напоминания через 21 день. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel"
-          : action === "edit_tips_link"
-          ? "Отправьте новую ссылку на чаевые (должна начинаться с http://, https:// или t.me/). Для отмены напишите /admin_cancel"
-          : action === "edit_contacts"
-          ? "Отправьте контакты в формате:\nТелефон (первая строка)\nАдрес (вторая строка)\n\nДля отмены напишите /admin_cancel"
-          : "Неизвестное действие"
+            ? "Отправьте код отмены записи (например: A3K9X2). Для отмены напишите /admin_cancel"
+            : action === "ban"
+              ? "Отправьте Telegram ID или @username пользователя для бана. Для отмены напишите /admin_cancel"
+              : action === "unban"
+                ? "Отправьте Telegram ID пользователя для разбанивания. Для отмены напишите /admin_cancel"
+                : action === "edit_21day_reminder"
+                  ? "Отправьте новый текст для напоминания через 21 день. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel"
+                  : action === "edit_tips_link"
+                    ? "Отправьте новую ссылку на чаевые (должна начинаться с http://, https:// или t.me/). Для отмены напишите /admin_cancel"
+                    : action === "edit_contacts"
+                      ? "Отправьте контакты в формате:\nТелефон (первая строка)\nАдрес (вторая строка)\n\nДля отмены напишите /admin_cancel"
+                      : "Неизвестное действие",
       );
       return;
     }
@@ -574,7 +573,9 @@ function createBot({ config, sheetsService, calendarService }) {
 
       // Получаем всех клиентов
       const allClients = await sheetsService.getAllClients();
-      const allClientsWithTelegram = allClients.filter((c) => c && c.telegramId);
+      const allClientsWithTelegram = allClients.filter(
+        (c) => c && c.telegramId,
+      );
 
       // Вычисляем следующий понедельник для сброса меток
       const timezone = await sheetsService.getTimezone();
@@ -612,9 +613,7 @@ function createBot({ config, sheetsService, calendarService }) {
       await ctx.reply(message);
     } catch (err) {
       console.error("Ошибка при получении статуса рассылки:", err);
-      await ctx.reply(
-        `Ошибка при получении статуса рассылки: ${err.message}`
-      );
+      await ctx.reply(`Ошибка при получении статуса рассылки: ${err.message}`);
     }
   });
 
@@ -625,12 +624,12 @@ function createBot({ config, sheetsService, calendarService }) {
       try {
         const currentMessage = await sheetsService.get21DayReminderMessage();
         await ctx.reply(
-          `Текущий текст напоминания:\n\n${currentMessage}\n\nОтправьте новый текст. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel`
+          `Текущий текст напоминания:\n\n${currentMessage}\n\nОтправьте новый текст. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel`,
         );
         await handleAdminAction(ctx, "edit_21day_reminder");
       } catch (err) {
         await ctx.reply(
-          `Ошибка при получении текущего сообщения: ${err.message}`
+          `Ошибка при получении текущего сообщения: ${err.message}`,
         );
       }
     }
@@ -645,7 +644,7 @@ function createBot({ config, sheetsService, calendarService }) {
         await ctx.reply(
           `Текущая ссылка на чаевые:\n\n${
             currentLink || "не установлена"
-          }\n\nОтправьте новую ссылку (должна начинаться с http://, https:// или t.me/). Для отмены напишите /admin_cancel`
+          }\n\nОтправьте новую ссылку (должна начинаться с http://, https:// или t.me/). Для отмены напишите /admin_cancel`,
         );
         await handleAdminAction(ctx, "edit_tips_link");
       } catch (err) {
@@ -666,12 +665,12 @@ function createBot({ config, sheetsService, calendarService }) {
             currentPhone || "не установлен"
           }\n📍 Адрес: ${
             currentAddress || "не установлен"
-          }\n\nОтправьте новые контакты в формате:\nТелефон (первая строка)\nАдрес (вторая строка)\n\nДля отмены напишите /admin_cancel`
+          }\n\nОтправьте новые контакты в формате:\nТелефон (первая строка)\nАдрес (вторая строка)\n\nДля отмены напишите /admin_cancel`,
         );
         await handleAdminAction(ctx, "edit_contacts");
       } catch (err) {
         await ctx.reply(
-          `Ошибка при получении текущих контактов: ${err.message}`
+          `Ошибка при получении текущих контактов: ${err.message}`,
         );
       }
     }
@@ -694,7 +693,7 @@ function createBot({ config, sheetsService, calendarService }) {
       "Режим пользователя. Выберите действие:",
       Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
         .resize()
-        .oneTime()
+        .oneTime(),
     );
   });
 
@@ -729,7 +728,7 @@ function createBot({ config, sheetsService, calendarService }) {
     if (period === "back") {
       await ctx.reply(
         "Включён режим администратора. Выберите действие:",
-        adminKeyboard
+        adminKeyboard,
       );
       return;
     }
@@ -780,7 +779,7 @@ function createBot({ config, sheetsService, calendarService }) {
           startDate = now.startOf("month").format("YYYY-MM-DD");
           endDate = now.format("YYYY-MM-DD");
           periodLabel = `${now.format("MMMM YYYY")} (по ${formatDate(
-            endDate
+            endDate,
           )})`;
           break;
 
@@ -833,7 +832,7 @@ function createBot({ config, sheetsService, calendarService }) {
       const formatted = revenueStats.formatRevenueStats(
         stats,
         periodLabel,
-        extraMetrics
+        extraMetrics,
       );
 
       await ctx.reply(formatted);
@@ -842,7 +841,7 @@ function createBot({ config, sheetsService, calendarService }) {
       await ctx.reply(
         `Ошибка при получении статистики: ${
           error.message || "Неизвестная ошибка"
-        }`
+        }`,
       );
     }
   });
@@ -855,7 +854,7 @@ function createBot({ config, sheetsService, calendarService }) {
       ctx.session.fromSettings = true;
       await ctx.reply(
         "Управление услугами. Выберите действие:",
-        servicesKeyboard
+        servicesKeyboard,
       );
     }
   });
@@ -873,7 +872,7 @@ function createBot({ config, sheetsService, calendarService }) {
         delete ctx.session.fromSettings;
         await ctx.reply(
           "Включён режим администратора. Выберите действие:",
-          adminKeyboard
+          adminKeyboard,
         );
       }
     }
@@ -892,7 +891,7 @@ function createBot({ config, sheetsService, calendarService }) {
           (s) =>
             `• ${s.name}\n  Ключ: ${s.key}\n  Цена: ${
               s.price !== null ? s.price + " ₽" : "не указана"
-            }\n  Продолжительность: ${s.durationMin} мин`
+            }\n  Продолжительность: ${s.durationMin} мин`,
         )
         .join("\n\n");
       await ctx.reply(`Список услуг:\n\n${text}`);
@@ -904,7 +903,7 @@ function createBot({ config, sheetsService, calendarService }) {
     if (ctx.session && ctx.session.mode === "admin") {
       ctx.session.servicesAction = { type: "create", step: "key" };
       await ctx.reply(
-        "Добавление новой услуги.\n\nОтправьте ключ услуги (латинские буквы, цифры, подчёркивания, например: NEW_SERVICE):\nДля отмены напишите /admin_cancel"
+        "Добавление новой услуги.\n\nОтправьте ключ услуги (латинские буквы, цифры, подчёркивания, например: NEW_SERVICE):\nДля отмены напишите /admin_cancel",
       );
     }
   });
@@ -923,7 +922,7 @@ function createBot({ config, sheetsService, calendarService }) {
       buttons.push([Markup.button.callback("Отменить", "service_cancel")]);
       await ctx.reply(
         "Выберите услугу для изменения:",
-        Markup.inlineKeyboard(buttons)
+        Markup.inlineKeyboard(buttons),
       );
     }
   });
@@ -939,13 +938,13 @@ function createBot({ config, sheetsService, calendarService }) {
       const buttons = services.map((s) => [
         Markup.button.callback(
           `${s.name} (${s.key})`,
-          `service_delete:${s.key}`
+          `service_delete:${s.key}`,
         ),
       ]);
       buttons.push([Markup.button.callback("Отменить", "service_cancel")]);
       await ctx.reply(
         "Выберите услугу для удаления:",
-        Markup.inlineKeyboard(buttons)
+        Markup.inlineKeyboard(buttons),
       );
     }
   });
@@ -970,7 +969,7 @@ function createBot({ config, sheetsService, calendarService }) {
       [
         Markup.button.callback(
           "Продолжительность",
-          `service_field:durationMin`
+          `service_field:durationMin`,
         ),
       ],
       [Markup.button.callback("Отменить", "service_cancel")],
@@ -983,7 +982,7 @@ function createBot({ config, sheetsService, calendarService }) {
       }\nПродолжительность: ${
         service.durationMin
       } мин\n\nВыберите поле для изменения:`,
-      Markup.inlineKeyboard(buttons)
+      Markup.inlineKeyboard(buttons),
     );
   });
 
@@ -1005,7 +1004,7 @@ function createBot({ config, sheetsService, calendarService }) {
       durationMin: "продолжительность в минутах",
     };
     await ctx.reply(
-      `Отправьте новое значение для поля "${fieldNames[field]}":\nДля отмены напишите /admin_cancel`
+      `Отправьте новое значение для поля "${fieldNames[field]}":\nДля отмены напишите /admin_cancel`,
     );
   });
 
@@ -1054,7 +1053,7 @@ function createBot({ config, sheetsService, calendarService }) {
       bot,
       sheetsService,
       act.payload || act.message,
-      { recipients, throttleMs: 750, skipBanned: true }
+      { recipients, throttleMs: 750, skipBanned: true },
     );
     const ok = results.filter((r) => r.ok).length;
     const fail = results.length - ok;
@@ -1069,11 +1068,8 @@ function createBot({ config, sheetsService, calendarService }) {
         failedCount: fail,
         payloadKind: act.payload?.kind || "text",
       },
-      ok > 0 ? "success" : "failed"
+      ok > 0 ? "success" : "failed",
     );
-
-    // Планирование резервного копирования (с дебаунсингом)
-    scheduleBackup();
 
     await ctx.reply(`Рассылка завершена. Отправлено: ${ok}. Ошибок: ${fail}.`);
     delete ctx.session.adminAction;
@@ -1108,13 +1104,13 @@ function createBot({ config, sheetsService, calendarService }) {
           const existing = servicesService.getServiceByKey(key);
           if (existing) {
             await ctx.reply(
-              "Услуга с таким ключом уже существует. Попробуйте другой ключ или /admin_cancel для отмены."
+              "Услуга с таким ключом уже существует. Попробуйте другой ключ или /admin_cancel для отмены.",
             );
             return;
           }
           if (!/^[A-Za-z0-9_]+$/.test(key)) {
             await ctx.reply(
-              "Ключ должен содержать только латинские буквы, цифры и подчёркивания. Попробуйте снова или /admin_cancel для отмены."
+              "Ключ должен содержать только латинские буквы, цифры и подчёркивания. Попробуйте снова или /admin_cancel для отмены.",
             );
             return;
           }
@@ -1125,7 +1121,7 @@ function createBot({ config, sheetsService, calendarService }) {
         if (servicesAction.step === "name") {
           if (!text || text.trim().length === 0) {
             await ctx.reply(
-              "Название не может быть пустым. Попробуйте снова или /admin_cancel для отмены."
+              "Название не может быть пустым. Попробуйте снова или /admin_cancel для отмены.",
             );
             return;
           }
@@ -1136,7 +1132,7 @@ function createBot({ config, sheetsService, calendarService }) {
             name: text.trim(),
           };
           await ctx.reply(
-            "Отправьте цену услуги (число в рублях) или 'нет' если цена не указана:"
+            "Отправьте цену услуги (число в рублях) или 'нет' если цена не указана:",
           );
           return;
         }
@@ -1146,7 +1142,7 @@ function createBot({ config, sheetsService, calendarService }) {
             const priceNum = Number(text);
             if (isNaN(priceNum) || priceNum < 0) {
               await ctx.reply(
-                "Цена должна быть неотрицательным числом или 'нет'. Попробуйте снова или /admin_cancel для отмены."
+                "Цена должна быть неотрицательным числом или 'нет'. Попробуйте снова или /admin_cancel для отмены.",
               );
               return;
             }
@@ -1166,7 +1162,7 @@ function createBot({ config, sheetsService, calendarService }) {
           const durationNum = Number(text);
           if (isNaN(durationNum) || durationNum <= 0) {
             await ctx.reply(
-              "Продолжительность должна быть положительным числом. Попробуйте снова или /admin_cancel для отмены."
+              "Продолжительность должна быть положительным числом. Попробуйте снова или /admin_cancel для отмены.",
             );
             return;
           }
@@ -1184,7 +1180,7 @@ function createBot({ config, sheetsService, calendarService }) {
                 result.service.price !== null
                   ? result.service.price + " ₽"
                   : "не указана"
-              }\nПродолжительность: ${result.service.durationMin} мин`
+              }\nПродолжительность: ${result.service.durationMin} мин`,
             );
           } else {
             await ctx.reply(`Ошибка при создании услуги: ${result.error}`);
@@ -1199,7 +1195,7 @@ function createBot({ config, sheetsService, calendarService }) {
         if (field === "name") {
           if (!text || text.trim().length === 0) {
             await ctx.reply(
-              "Название не может быть пустым. Попробуйте снова или /admin_cancel для отмены."
+              "Название не может быть пустым. Попробуйте снова или /admin_cancel для отмены.",
             );
             return;
           }
@@ -1208,7 +1204,7 @@ function createBot({ config, sheetsService, calendarService }) {
           });
           if (result.ok) {
             await ctx.reply(
-              `Название услуги обновлено: "${result.service.name}"`
+              `Название услуги обновлено: "${result.service.name}"`,
             );
           } else {
             await ctx.reply(`Ошибка: ${result.error}`);
@@ -1226,7 +1222,7 @@ function createBot({ config, sheetsService, calendarService }) {
             const priceNum = Number(text);
             if (isNaN(priceNum) || priceNum < 0) {
               await ctx.reply(
-                "Цена должна быть неотрицательным числом, 'удалить' или 'нет'. Попробуйте снова или /admin_cancel для отмены."
+                "Цена должна быть неотрицательным числом, 'удалить' или 'нет'. Попробуйте снова или /admin_cancel для отмены.",
               );
               return;
             }
@@ -1241,7 +1237,7 @@ function createBot({ config, sheetsService, calendarService }) {
                 result.service.price !== null
                   ? result.service.price + " ₽"
                   : "не указана"
-              }`
+              }`,
             );
           } else {
             await ctx.reply(`Ошибка: ${result.error}`);
@@ -1253,7 +1249,7 @@ function createBot({ config, sheetsService, calendarService }) {
           const durationNum = Number(text);
           if (isNaN(durationNum) || durationNum <= 0) {
             await ctx.reply(
-              "Продолжительность должна быть положительным числом. Попробуйте снова или /admin_cancel для отмены."
+              "Продолжительность должна быть положительным числом. Попробуйте снова или /admin_cancel для отмены.",
             );
             return;
           }
@@ -1262,7 +1258,7 @@ function createBot({ config, sheetsService, calendarService }) {
           });
           if (result.ok) {
             await ctx.reply(
-              `Продолжительность услуги обновлена: ${result.service.durationMin} мин`
+              `Продолжительность услуги обновлена: ${result.service.durationMin} мин`,
             );
           } else {
             await ctx.reply(`Ошибка: ${result.error}`);
@@ -1289,7 +1285,7 @@ function createBot({ config, sheetsService, calendarService }) {
         !/^[A-Z0-9]+$/.test(cancelCode)
       ) {
         await ctx.reply(
-          "Неверный формат кода отмены. Код должен состоять из 6 символов (буквы и цифры). /admin_cancel для отмены."
+          "Неверный формат кода отмены. Код должен состоять из 6 символов (буквы и цифры). /admin_cancel для отмены.",
         );
         return;
       }
@@ -1299,20 +1295,20 @@ function createBot({ config, sheetsService, calendarService }) {
       if (!result.ok) {
         if (result.reason === "appointment_not_found") {
           await ctx.reply(
-            "Запись с таким кодом отмены не найдена. /admin_cancel для отмены."
+            "Запись с таким кодом отмены не найдена. /admin_cancel для отмены.",
           );
         } else if (result.reason === "already_cancelled") {
           await ctx.reply("Эта запись уже отменена. /admin_cancel для отмены.");
         } else {
           await ctx.reply(
-            "Не удалось отменить запись. /admin_cancel для отмены."
+            "Не удалось отменить запись. /admin_cancel для отмены.",
           );
         }
         logAdminAction(
           ctx.from.id,
           "admin_cancel_booking_by_code",
           { cancelCode, reason: result.reason },
-          "failed"
+          "failed",
         );
       } else {
         const appointment = result.appointment;
@@ -1320,7 +1316,7 @@ function createBot({ config, sheetsService, calendarService }) {
           `Запись отменена по коду ${cancelCode}.\n` +
             `ID: ${appointment.id}\n` +
             `Клиент: ${appointment.clientName}\n` +
-            `Дата: ${formatDate(appointment.date)} ${appointment.timeStart}`
+            `Дата: ${formatDate(appointment.date)} ${appointment.timeStart}`,
         );
         // Логирование критичного действия (админ отменил запись по коду)
         logCriticalAction(
@@ -1333,7 +1329,7 @@ function createBot({ config, sheetsService, calendarService }) {
             date: appointment.date,
             time: appointment.timeStart,
           },
-          "success"
+          "success",
         );
         if (appointment.telegramId) {
           try {
@@ -1341,7 +1337,7 @@ function createBot({ config, sheetsService, calendarService }) {
               String(appointment.telegramId),
               `Ваша запись на ${formatDate(appointment.date)} ${
                 appointment.timeStart
-              } отменена менеджером.`
+              } отменена менеджером.`,
             );
           } catch (e) {}
         }
@@ -1356,7 +1352,7 @@ function createBot({ config, sheetsService, calendarService }) {
       if (target.startsWith("@")) {
         const clients = await sheetsService.getAllClients();
         const found = clients.find(
-          (c) => c.username && `@${c.username}` === target
+          (c) => c.username && `@${c.username}` === target,
         );
         if (found) telegramId = found.telegramId;
       } else {
@@ -1366,7 +1362,7 @@ function createBot({ config, sheetsService, calendarService }) {
       // Валидация Telegram ID
       if (!telegramId || !validateTelegramId(telegramId)) {
         await ctx.reply(
-          "Неверный формат Telegram ID. /admin_cancel для отмены."
+          "Неверный формат Telegram ID. /admin_cancel для отмены.",
         );
         return;
       }
@@ -1380,10 +1376,8 @@ function createBot({ config, sheetsService, calendarService }) {
           bannedUserId: telegramId,
           target: text,
         },
-        "success"
+        "success",
       );
-      // Планирование резервного копирования (с дебаунсингом)
-      scheduleBackup();
       await ctx.reply(`Пользователь ${telegramId} забанен.`);
       delete ctx.session.adminAction;
       return;
@@ -1395,7 +1389,7 @@ function createBot({ config, sheetsService, calendarService }) {
       // Валидация Telegram ID
       if (!telegramId || !validateTelegramId(telegramId)) {
         await ctx.reply(
-          "Неверный формат Telegram ID. /admin_cancel для отмены."
+          "Неверный формат Telegram ID. /admin_cancel для отмены.",
         );
         return;
       }
@@ -1408,10 +1402,8 @@ function createBot({ config, sheetsService, calendarService }) {
         {
           unbannedUserId: telegramId,
         },
-        "success"
+        "success",
       );
-      // Планирование резервного копирования (с дебаунсингом)
-      scheduleBackup();
       await ctx.reply(`Пользователь ${telegramId} разбанен.`);
       delete ctx.session.adminAction;
       return;
@@ -1421,7 +1413,7 @@ function createBot({ config, sheetsService, calendarService }) {
       const message = text;
       if (!message || message.trim().length === 0) {
         await ctx.reply(
-          "Текст не может быть пустым. /admin_cancel для отмены."
+          "Текст не может быть пустым. /admin_cancel для отмены.",
         );
         return;
       }
@@ -1441,21 +1433,21 @@ function createBot({ config, sheetsService, calendarService }) {
           ctx.from.id,
           "admin_edit_21day_reminder",
           { messageLength: sanitizedMessage.length },
-          "success"
+          "success",
         );
 
         await ctx.reply(
-          `Текст напоминания через 21 день успешно обновлен!\n\nНовый текст:\n${sanitizedMessage}`
+          `Текст напоминания через 21 день успешно обновлен!\n\nНовый текст:\n${sanitizedMessage}`,
         );
       } catch (err) {
         await ctx.reply(
-          `Ошибка при сохранении текста: ${err.message}\n/admin_cancel для отмены.`
+          `Ошибка при сохранении текста: ${err.message}\n/admin_cancel для отмены.`,
         );
         logError(
           ctx.from.id,
           "admin_edit_21day_reminder",
           { error: err.message },
-          "error"
+          "error",
         );
         return;
       }
@@ -1468,7 +1460,7 @@ function createBot({ config, sheetsService, calendarService }) {
       const link = text;
       if (!link || link.trim().length === 0) {
         await ctx.reply(
-          "Ссылка не может быть пустой. /admin_cancel для отмены."
+          "Ссылка не может быть пустой. /admin_cancel для отмены.",
         );
         return;
       }
@@ -1482,7 +1474,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
       if (!isValidUrl || trimmedLink.length < 5) {
         await ctx.reply(
-          "Ссылка должна начинаться с http://, https:// или t.me/ и быть не менее 5 символов. /admin_cancel для отмены."
+          "Ссылка должна начинаться с http://, https:// или t.me/ и быть не менее 5 символов. /admin_cancel для отмены.",
         );
         return;
       }
@@ -1495,21 +1487,21 @@ function createBot({ config, sheetsService, calendarService }) {
           ctx.from.id,
           "admin_edit_tips_link",
           { linkLength: trimmedLink.length },
-          "success"
+          "success",
         );
 
         await ctx.reply(
-          `Ссылка на чаевые успешно обновлена!\n\nНовая ссылка:\n${trimmedLink}`
+          `Ссылка на чаевые успешно обновлена!\n\nНовая ссылка:\n${trimmedLink}`,
         );
       } catch (err) {
         await ctx.reply(
-          `Ошибка при сохранении ссылки: ${err.message}\n/admin_cancel для отмены.`
+          `Ошибка при сохранении ссылки: ${err.message}\n/admin_cancel для отмены.`,
         );
         logError(
           ctx.from.id,
           "admin_edit_tips_link",
           { error: err.message },
-          "error"
+          "error",
         );
         return;
       }
@@ -1526,7 +1518,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
       if (lines.length < 2) {
         await ctx.reply(
-          "Необходимо указать телефон и адрес в двух строках:\nПервая строка - телефон\nВторая строка - адрес\n\n/admin_cancel для отмены."
+          "Необходимо указать телефон и адрес в двух строках:\nПервая строка - телефон\nВторая строка - адрес\n\n/admin_cancel для отмены.",
         );
         return;
       }
@@ -1536,14 +1528,14 @@ function createBot({ config, sheetsService, calendarService }) {
 
       if (!phone || phone.trim().length === 0) {
         await ctx.reply(
-          "Телефон не может быть пустым. /admin_cancel для отмены."
+          "Телефон не может быть пустым. /admin_cancel для отмены.",
         );
         return;
       }
 
       if (!address || address.trim().length === 0) {
         await ctx.reply(
-          "Адрес не может быть пустым. /admin_cancel для отмены."
+          "Адрес не может быть пустым. /admin_cancel для отмены.",
         );
         return;
       }
@@ -1560,21 +1552,21 @@ function createBot({ config, sheetsService, calendarService }) {
             phoneLength: phone.trim().length,
             addressLength: address.trim().length,
           },
-          "success"
+          "success",
         );
 
         await ctx.reply(
-          `Контакты успешно обновлены!\n\n📞 Телефон: ${phone.trim()}\n📍 Адрес: ${address.trim()}`
+          `Контакты успешно обновлены!\n\n📞 Телефон: ${phone.trim()}\n📍 Адрес: ${address.trim()}`,
         );
       } catch (err) {
         await ctx.reply(
-          `Ошибка при сохранении контактов: ${err.message}\n/admin_cancel для отмены.`
+          `Ошибка при сохранении контактов: ${err.message}\n/admin_cancel для отмены.`,
         );
         logError(
           ctx.from.id,
           "admin_edit_contacts",
           { error: err.message },
-          "error"
+          "error",
         );
         return;
       }
@@ -1601,7 +1593,7 @@ function createBot({ config, sheetsService, calendarService }) {
       const clientsForBroadcast = sheetsService.getClientsForBroadcast
         ? await sheetsService.getClientsForBroadcast()
         : await sheetsService.getAllClients();
-      
+
       const bans = await adminService.getBans();
       const recipients = clientsForBroadcast
         .filter((c) => c && c.telegramId)
@@ -1610,7 +1602,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
       if (!recipients.length) {
         await ctx.reply(
-          "Нет получателей для рассылки (нет клиентов с telegramId или все в бане)."
+          "Нет получателей для рассылки (нет клиентов с telegramId или все в бане).",
         );
         delete ctx.session.adminAction;
         return;
@@ -1618,12 +1610,17 @@ function createBot({ config, sheetsService, calendarService }) {
 
       // Получаем общее количество клиентов для информации
       const allClients = await sheetsService.getAllClients();
-      const allClientsWithTelegram = allClients.filter((c) => c && c.telegramId).length;
+      const allClientsWithTelegram = allClients.filter(
+        (c) => c && c.telegramId,
+      ).length;
 
       // Проверка максимального количества получателей (250)
       const MAX_RECIPIENTS = 250;
       const recipientsToSend = recipients.slice(0, MAX_RECIPIENTS);
-      const waitingCount = Math.max(0, allClientsWithTelegram - recipients.length);
+      const waitingCount = Math.max(
+        0,
+        allClientsWithTelegram - recipients.length,
+      );
 
       ctx.session.adminAction = {
         type: "broadcast",
@@ -1636,7 +1633,7 @@ function createBot({ config, sheetsService, calendarService }) {
         [
           Markup.button.callback(
             "Подтвердить рассылку ✅",
-            "admin:broadcast_confirm"
+            "admin:broadcast_confirm",
           ),
         ],
         [Markup.button.callback("Отменить ❌", "admin:broadcast_cancel")],
@@ -1678,7 +1675,7 @@ function createBot({ config, sheetsService, calendarService }) {
     const clientsForBroadcast = sheetsService.getClientsForBroadcast
       ? await sheetsService.getClientsForBroadcast()
       : await sheetsService.getAllClients();
-    
+
     const bans = await adminService.getBans();
     const recipients = clientsForBroadcast
       .filter((c) => c && c.telegramId)
@@ -1687,7 +1684,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
     if (!recipients.length) {
       await ctx.reply(
-        "Нет получателей для рассылки (нет клиентов с telegramId или все в бане)."
+        "Нет получателей для рассылки (нет клиентов с telegramId или все в бане).",
       );
       delete ctx.session.adminAction;
       return;
@@ -1695,12 +1692,17 @@ function createBot({ config, sheetsService, calendarService }) {
 
     // Получаем общее количество клиентов для информации
     const allClients = await sheetsService.getAllClients();
-    const allClientsWithTelegram = allClients.filter((c) => c && c.telegramId).length;
+    const allClientsWithTelegram = allClients.filter(
+      (c) => c && c.telegramId,
+    ).length;
 
     // Проверка максимального количества получателей (250)
     const MAX_RECIPIENTS = 250;
     const recipientsToSend = recipients.slice(0, MAX_RECIPIENTS);
-    const waitingCount = Math.max(0, allClientsWithTelegram - recipients.length);
+    const waitingCount = Math.max(
+      0,
+      allClientsWithTelegram - recipients.length,
+    );
 
     ctx.session.adminAction = {
       type: "broadcast",
@@ -1713,7 +1715,7 @@ function createBot({ config, sheetsService, calendarService }) {
       [
         Markup.button.callback(
           "Подтвердить рассылку ✅",
-          "admin:broadcast_confirm"
+          "admin:broadcast_confirm",
         ),
       ],
       [Markup.button.callback("Отменить ❌", "admin:broadcast_cancel")],
@@ -1721,10 +1723,10 @@ function createBot({ config, sheetsService, calendarService }) {
 
     await ctx.reply(
       "Предпросмотр фото-письма. Подпись:" +
-        (caption ? `\n${caption}` : " (без подписи)")
+        (caption ? `\n${caption}` : " (без подписи)"),
     );
     await ctx.replyWithPhoto(fileId);
-    
+
     let previewMessage = `📤 Будет отправлено сегодня: ${recipientsToSend.length} из ${MAX_RECIPIENTS}\n`;
     if (waitingCount > 0) {
       previewMessage += `⏳ Заблокированных пользователей: ${waitingCount}\n`;
@@ -1732,8 +1734,7 @@ function createBot({ config, sheetsService, calendarService }) {
     if (recipients.length > MAX_RECIPIENTS) {
       previewMessage += `⚠️ Всего доступно: ${recipients.length}. Будет отправлено ${MAX_RECIPIENTS}, остальные получат рассылку завтра.\n`;
     }
-  
-    
+
     await ctx.reply(previewMessage, keyboard);
   });
 

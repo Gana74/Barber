@@ -571,15 +571,17 @@ async function createSheetsService(config) {
     workHoursCache = { byDate: {}, byWeekday: {}, expiresAt: 0 };
   }
 
-  async function getDaySchedule(dateStr) {
-    // Комментарий: используем кэш
+  async function getDaySchedule(dateStr, { fresh = false } = {}) {
+    // Комментарий: используем кэш (если не запрошен свежий результат)
     const now = Date.now();
-    const cached = dayCache[dateStr];
-    if (cached && cached.expiresAt > now) {
-      return {
-        schedule: cached.schedule,
-        appointments: cached.appointments,
-      };
+    if (!fresh) {
+      const cached = dayCache[dateStr];
+      if (cached && cached.expiresAt > now) {
+        return {
+          schedule: cached.schedule,
+          appointments: cached.appointments,
+        };
+      }
     }
 
     // Читаем Расписание

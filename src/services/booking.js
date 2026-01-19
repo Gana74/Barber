@@ -153,8 +153,10 @@ function createBookingService({ sheetsService, config, calendarService }) {
     }
 
     const timezone = await sheetsService.getTimezone();
+    // Важно: для актуальности блокировок/расписания читаем без кэша
     const { schedule, appointments } = await sheetsService.getDaySchedule(
-      dateStr
+      dateStr,
+      { fresh: true }
     );
 
     const workHours =
@@ -180,8 +182,10 @@ function createBookingService({ sheetsService, config, calendarService }) {
 
   async function isSlotFree({ dateStr, timeStr, service }) {
     const timezone = await sheetsService.getTimezone();
+    // Важно: для актуальности блокировок/расписания читаем без кэша
     const { schedule, appointments } = await sheetsService.getDaySchedule(
-      dateStr
+      dateStr,
+      { fresh: true }
     );
     const workHours =
       (sheetsService.getWorkHoursForDate &&

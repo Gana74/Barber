@@ -154,9 +154,9 @@ function validateAppointmentId(id) {
   }
 
   const idStr = id.trim();
-  // ID записи: буквы и цифры, длина от 1 до 50 символов
-  // Формат обычно: "A123456" или подобный
-  const isValid = /^[A-Za-z0-9]{1,50}$/.test(idStr);
+  // ID записи: буквы, цифры и подчёркивания, длина от 1 до 50 символов
+  // Формат по генератору: "A_xxxxxx_xxxxxx"
+  const isValid = /^[A-Za-z0-9_]{1,50}$/.test(idStr);
 
   validationCache.set(cacheKey, isValid);
   return isValid;

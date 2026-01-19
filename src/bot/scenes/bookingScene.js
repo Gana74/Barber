@@ -21,7 +21,12 @@ function monthLabel(d) {
   return d.format("MMMM YYYY");
 }
 
-function createCalendarKeyboard(baseDate, timezone, allowedMonths) {
+function createCalendarKeyboard(
+  baseDate,
+  timezone,
+  allowedMonths,
+  availableDates
+) {
   const start = dayjs(baseDate).tz(timezone).startOf("month");
   const end = dayjs(baseDate).tz(timezone).endOf("month");
 
@@ -65,7 +70,12 @@ function createCalendarKeyboard(baseDate, timezone, allowedMonths) {
       const isPast = day.isBefore(today, "day");
 
       // Не показываем прошедшие дни и дни из неразрешённых месяцев
-      const showDate = isCurrentMonth && monthAllowed && !isPast;
+      const showDate =
+        isCurrentMonth &&
+        monthAllowed &&
+        !isPast &&
+        (!availableDates ||
+          availableDates.has(day.format("YYYY-MM-DD")));
       const label = showDate ? `${day.date()}` : " ";
       const callback = showDate
         ? `date:${day.format("YYYY-MM-DD")}`
@@ -96,6 +106,52 @@ function getAllowedMonthKeys(timezone) {
 
 function monthKeyFromDate(d) {
   return dayjs(d).format("YYYY-MM");
+}
+
+// Собираем множество дат с рабочими часами (без проверки слотов для ускорения)
+async function buildAvailableDateSet({
+  timezone,
+  allowedMonths,
+  sheetsService,
+}) {
+  const result = new Set();
+  if (!allowedMonths || !allowedMonths.length) return result;
+
+  // диапазон от первого разрешённого месяца до последнего
+  const monthStarts = allowedMonths.map((k) => dayjs.tz(`${k}-01`, timezone));
+  const rangeStart = monthStarts.reduce((min, d) => (d.isBefore(min) ? d : min));
+  const rangeEnd = monthStarts.reduce((max, d) => {
+    const end = d.endOf("month");
+    return end.isAfter(max) ? end : max;
+  }, rangeStart.endOf("month"));
+
+  const today = dayjs().tz(timezone).startOf("day");
+  let cursor = rangeStart.startOf("day");
+  
+  // Проверяем рабочие часы для всех дат в разрешенных месяцах
+  while (!cursor.isAfter(rangeEnd)) {
+    const monthKey = monthKeyFromDate(cursor);
+    if (!allowedMonths.includes(monthKey) || cursor.isBefore(today)) {
+      cursor = cursor.add(1, "day");
+      continue;
+    }
+
+    const dateStr = cursor.format("YYYY-MM-DD");
+
+    // Проверяем только рабочие часы (быстро, без проверки слотов)
+    try {
+      const wh = await sheetsService.getWorkHoursForDate(dateStr);
+      if (wh && wh.start && wh.end) {
+        result.add(dateStr);
+      }
+    } catch (e) {
+      // игнорируем ошибки, движемся дальше
+    }
+
+    cursor = cursor.add(1, "day");
+  }
+
+  return result;
 }
 
 function createBookingScene({ bookingService, sheetsService, config }) {
@@ -178,11 +234,30 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
       ctx.wizard.state.booking.serviceKey = service.key;
 
+      // Важно: чтобы изменения в WorkHours вступали сразу — сбрасываем кэш перед чтением
+      if (sheetsService.invalidateWorkHoursCache) {
+        try {
+          sheetsService.invalidateWorkHoursCache();
+        } catch (e) {}
+      }
+
       const timezone = await sheetsService.getTimezone();
       const now = dayjs().tz(timezone);
       const allowed = getAllowedMonthKeys(timezone);
+      const availableDates = await buildAvailableDateSet({
+        timezone,
+        allowedMonths: allowed,
+        sheetsService,
+      });
 
-      const calendar = createCalendarKeyboard(now, timezone, allowed);
+      ctx.wizard.state.booking.availableDates = Array.from(availableDates);
+
+      const calendar = createCalendarKeyboard(
+        now,
+        timezone,
+        allowed,
+        availableDates
+      );
 
       await ctx.reply("Выбери дату:", calendar);
 
@@ -190,6 +265,20 @@ function createBookingScene({ bookingService, sheetsService, config }) {
     },
     // Шаг 3: выбор времени (обработка callback с датой)
     async (ctx) => {
+      // Обработка текстового сообщения "Назад"
+      if (ctx.message && ctx.message.text === "Назад ⬅️") {
+        try {
+          await ctx.scene.leave();
+        } catch (e) {
+          // игнорируем ошибки при выходе из сцены
+        }
+        await ctx.reply(
+          "Ок, возвращаю в главное меню.",
+          Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize()
+        );
+        return;
+      }
+
       if (!("callback_query" in ctx.update)) {
         await ctx.reply("Выбери дату по кнопке ниже.");
         return;
@@ -200,8 +289,23 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       // Навигация назад к услугам
       if (data === "back_to_services") {
         delete ctx.wizard.state.booking.dateStr;
+        delete ctx.wizard.state.booking.availableDates;
         await ctx.answerCbQuery("Возвращаемся к выбору услуги");
-        return ctx.wizard.selectStep(0);
+        
+        // Возвращаемся к шагу выбора услуги
+        const services = bookingService.getServiceList();
+        const buttons = services.map((s) => {
+          const priceText = s.price !== null ? ` (${s.price} ₽)` : "";
+          return [s.name + priceText];
+        });
+        buttons.push(["Назад ⬅️"]);
+        
+        await ctx.reply(
+          "Выбери услугу:",
+          Markup.keyboard(buttons).oneTime().resize()
+        );
+        
+        return ctx.wizard.selectStep(1);
       }
 
       // Обработка навигации календаря (смена месяца)
@@ -211,8 +315,19 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         if (payload === "noop") return;
 
         // payload expected as YYYY-MM
+        if (sheetsService.invalidateWorkHoursCache) {
+          try {
+            sheetsService.invalidateWorkHoursCache();
+          } catch (e) {}
+        }
         const timezone = await sheetsService.getTimezone();
         const allowed = getAllowedMonthKeys(timezone);
+        const availableDates = await buildAvailableDateSet({
+          timezone,
+          allowedMonths: allowed,
+          sheetsService,
+        });
+        ctx.wizard.state.booking.availableDates = Array.from(availableDates);
 
         if (!allowed.includes(payload)) {
           await ctx.answerCbQuery("Запись на этот месяц недоступна.");
@@ -220,7 +335,12 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         }
 
         const base = dayjs.tz(`${payload}-01`, timezone);
-        const calendar = createCalendarKeyboard(base, timezone, allowed);
+        const calendar = createCalendarKeyboard(
+          base,
+          timezone,
+          allowed,
+          availableDates
+        );
 
         try {
           await ctx.editMessageReplyMarkup(calendar.reply_markup);
@@ -239,19 +359,53 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       }
 
       const dateStr = data.slice("date:".length);
-      // Проверяем, что выбранный месяц разрешён
+      // Проверяем, что выбранный месяц разрешён и дата не в прошлом
       const timezone = await sheetsService.getTimezone();
       const allowed = getAllowedMonthKeys(timezone);
       const monthKey = monthKeyFromDate(dateStr);
-      if (!allowed.includes(monthKey)) {
+      const today = dayjs().tz(timezone).startOf("day");
+      const selectedDate = dayjs.tz(dateStr, timezone).startOf("day");
+      
+      if (!allowed.includes(monthKey) || selectedDate.isBefore(today, "day")) {
         await ctx.answerCbQuery("Выбрана недоступная дата");
+        const availableDates = new Set(
+          (ctx.wizard.state.booking && ctx.wizard.state.booking.availableDates) ||
+            []
+        );
         const base = dayjs.tz(dateStr, timezone);
-        const calendar = createCalendarKeyboard(base, timezone, allowed);
+        const calendar = createCalendarKeyboard(
+          base,
+          timezone,
+          allowed,
+          availableDates
+        );
         try {
           await ctx.reply("Выбери дату:", calendar);
         } catch (e) {}
         return;
       }
+      
+      // Проверяем рабочие часы для выбранной даты
+      const workHours = await sheetsService.getWorkHoursForDate(dateStr);
+      if (!workHours || !workHours.start || !workHours.end) {
+        await ctx.answerCbQuery("В этот день выходной");
+        const availableDates = new Set(
+          (ctx.wizard.state.booking && ctx.wizard.state.booking.availableDates) ||
+            []
+        );
+        const base = dayjs.tz(dateStr, timezone);
+        const calendar = createCalendarKeyboard(
+          base,
+          timezone,
+          allowed,
+          availableDates
+        );
+        try {
+          await ctx.reply("Выбери дату:", calendar);
+        } catch (e) {}
+        return;
+      }
+      
       ctx.wizard.state.booking.dateStr = dateStr;
 
       await ctx.answerCbQuery();
@@ -282,7 +436,16 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         const timezone = await sheetsService.getTimezone();
         const allowed = getAllowedMonthKeys(timezone);
         const base = dayjs.tz(dateStr, timezone);
-        const calendar = createCalendarKeyboard(base, timezone, allowed);
+        const availableDates = new Set(
+          (ctx.wizard.state.booking && ctx.wizard.state.booking.availableDates) ||
+            []
+        );
+        const calendar = createCalendarKeyboard(
+          base,
+          timezone,
+          allowed,
+          availableDates
+        );
 
         try {
           await ctx.reply("Выбери дату:", calendar);
@@ -335,7 +498,16 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           (ctx.wizard.state.booking && ctx.wizard.state.booking.dateStr) ||
           dayjs().tz(timezone).format("YYYY-MM-DD");
         const base = dayjs.tz(dateBase, timezone);
-        const calendar = createCalendarKeyboard(base, timezone, allowed);
+        const availableDates = new Set(
+          (ctx.wizard.state.booking && ctx.wizard.state.booking.availableDates) ||
+            []
+        );
+        const calendar = createCalendarKeyboard(
+          base,
+          timezone,
+          allowed,
+          availableDates
+        );
 
         try {
           await ctx.reply("Выбери дату:", calendar);

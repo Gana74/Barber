@@ -39,3 +39,4 @@
 {"timestamp":"2026-01-15T11:35:31.546Z","level":"ADMIN","userId":502105220,"action":"admin_edit_tips_link","details":{"linkLength":9},"result":"success"}
 {"timestamp":"2026-01-15T11:43:28.264Z","level":"ADMIN","userId":502105220,"action":"admin_edit_tips_link","details":{"linkLength":9},"result":"success"}
 {"timestamp":"2026-01-15T11:47:44.741Z","level":"INFO","userId":502105220,"action":"appointment_created","details":{"appointmentId":"A_mkfdxpsg_ck001h","service":"Оформление бороды","date":"2026-01-15","timeStart":"17:00","timeEnd":"17:30"},"result":"success"}
+{"timestamp":"2026-01-19T14:30:39.801Z","level":"CRITICAL","userId":502105220,"action":"admin_unban_user","details":{"unbannedUserId":"5734831768"},"result":"success"}
