@@ -31,12 +31,12 @@ function setupReminderCleanup() {
     () => {
       twoHourRemindedIds.clear();
       console.log(
-        "[reminders] Cleared 2h reminder cache (twoHourRemindedIds) at 00:00 UTC"
+        "[reminders] Cleared 2h reminder cache (twoHourRemindedIds) at 00:00 UTC",
       );
     },
     {
       timezone: "UTC",
-    }
+    },
   );
 }
 
@@ -72,13 +72,12 @@ function setupReminders({
         const nowTz = dayjs().tz(timezone);
         const tomorrow = nowTz.add(1, "day").format("YYYY-MM-DD");
 
-        const appointments = await sheetsService.getAppointmentsByDate(
-          tomorrow
-        );
+        const appointments =
+          await sheetsService.getAppointmentsByDate(tomorrow);
 
         // Фильтруем только активные записи
         const activeAppointments = appointments.filter(
-          (app) => app.status === booking.STATUSES.ACTIVE
+          (app) => app.status === booking.STATUSES.ACTIVE,
         );
 
         // Получаем контакты из Google Sheets с fallback на config (один раз перед циклом)
@@ -131,7 +130,7 @@ function setupReminders({
             errorCount++;
             console.error(
               `Ошибка отправки напоминания пользователю ${app.telegramId}:`,
-              err.message
+              err.message,
             );
           }
         }
@@ -139,11 +138,9 @@ function setupReminders({
         // Логируем результат
         console.log(
           `[${dayjs().format(
-            "YYYY-MM-DD HH:mm:ss"
-          )}] Напоминания за день записи отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`
+            "YYYY-MM-DD HH:mm:ss",
+          )}] Напоминания за день записи отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`,
         );
-
-        
       } catch (err) {
         console.error("Критическая ошибка в напоминаниях за день записи:", err);
       } finally {
@@ -152,7 +149,7 @@ function setupReminders({
     },
     {
       timezone: config.defaultTimezone,
-    }
+    },
   );
 
   // Напоминание за 2 часа до услуги: проверяем каждые 5 минут
@@ -170,19 +167,17 @@ function setupReminders({
         const currentDate = nowTz.format("YYYY-MM-DD");
 
         // Берём сегодняшние и завтрашние записи, чтобы покрыть переход через полночь
-        const todayApps = await sheetsService.getAppointmentsByDate(
-          currentDate
-        );
+        const todayApps =
+          await sheetsService.getAppointmentsByDate(currentDate);
         const tomorrowDate = nowTz.add(1, "day").format("YYYY-MM-DD");
-        const tomorrowApps = await sheetsService.getAppointmentsByDate(
-          tomorrowDate
-        );
+        const tomorrowApps =
+          await sheetsService.getAppointmentsByDate(tomorrowDate);
 
         const all = [...todayApps, ...tomorrowApps];
 
         // Фильтруем только активные записи
         const activeApps = all.filter(
-          (app) => app.status === booking.STATUSES.ACTIVE
+          (app) => app.status === booking.STATUSES.ACTIVE,
         );
 
         // Получаем телефон из Google Sheets с fallback на config (один раз перед циклом)
@@ -190,6 +185,11 @@ function setupReminders({
           (await sheetsService.getBarberPhone()) ||
           config.barberPhone ||
           "+7 XXX XXX-XX-XX";
+
+        const barberAddress =
+          (await sheetsService.getBarberAddress()) ||
+          config.barberAddress ||
+          "Адрес уточняйте у администратора";
 
         let sentCount = 0;
         let errorCount = 0;
@@ -229,6 +229,7 @@ function setupReminders({
               "",
               "📞 *Контакты:*",
               barberPhone,
+              barberAddress,
             ].join("\n");
 
             try {
@@ -244,13 +245,13 @@ function setupReminders({
               errorCount++;
               console.error(
                 `Ошибка отправки 2-часового напоминания пользователю ${app.telegramId}:`,
-                err.message
+                err.message,
               );
 
               // Если пользователь заблокировал бота, помечаем запись?
               if (err.response && err.response.error_code === 403) {
                 console.warn(
-                  `Пользователь ${app.telegramId} заблокировал бота, запись ID: ${app.id}`
+                  `Пользователь ${app.telegramId} заблокировал бота, запись ID: ${app.id}`,
                 );
               }
             }
@@ -261,8 +262,8 @@ function setupReminders({
         if (sentCount > 0 || errorCount > 0) {
           console.log(
             `[${dayjs().format(
-              "YYYY-MM-DD HH:mm:ss"
-            )}] 2-часовые напоминания: ${sentCount} отправлено, ${errorCount} ошибок`
+              "YYYY-MM-DD HH:mm:ss",
+            )}] 2-часовые напоминания: ${sentCount} отправлено, ${errorCount} ошибок`,
           );
         }
       } catch (err) {
@@ -273,7 +274,7 @@ function setupReminders({
     },
     {
       timezone: config.defaultTimezone,
-    }
+    },
   );
 
   // Напоминание за 1 день до записи для новых клиентов (опционально)
@@ -286,11 +287,10 @@ function setupReminders({
           const nowTz = dayjs().tz(timezone);
           const tomorrow = nowTz.add(1, "day").format("YYYY-MM-DD");
 
-          const appointments = await sheetsService.getAppointmentsByDate(
-            tomorrow
-          );
+          const appointments =
+            await sheetsService.getAppointmentsByDate(tomorrow);
           const activeApps = appointments.filter(
-            (app) => app.status === booking.STATUSES.ACTIVE
+            (app) => app.status === booking.STATUSES.ACTIVE,
           );
 
           // Можно добавить логику для новых клиентов (первая запись)
@@ -301,7 +301,7 @@ function setupReminders({
       },
       {
         timezone: config.defaultTimezone,
-      }
+      },
     );
   }
 
@@ -340,7 +340,7 @@ function setupReminders({
               const success = await sheetsService.updateAppointmentStatus(
                 app.id,
                 booking.STATUSES.COMPLETED,
-                { completedAtUtc }
+                { completedAtUtc },
               );
 
               if (success) {
@@ -348,7 +348,7 @@ function setupReminders({
                 console.log(
                   `[${dayjs().format("YYYY-MM-DD HH:mm:ss")}] Запись ${
                     app.id
-                  } автоматически завершена (${app.date} ${app.timeEnd})`
+                  } автоматически завершена (${app.date} ${app.timeEnd})`,
                 );
 
                 // Отправляем уведомление клиенту об окончании услуги
@@ -364,12 +364,12 @@ function setupReminders({
 
                     await bot.telegram.sendMessage(
                       String(app.telegramId),
-                      message
+                      message,
                     );
                   } catch (err) {
                     console.error(
                       `Ошибка отправки уведомления об окончании услуги клиенту ${app.telegramId}:`,
-                      err.message
+                      err.message,
                     );
                     // Не увеличиваем errorCount, так как запись уже успешно завершена
                   }
@@ -377,7 +377,7 @@ function setupReminders({
               } else {
                 errorCount++;
                 console.error(
-                  `Ошибка при завершении записи ${app.id}: не удалось обновить статус`
+                  `Ошибка при завершении записи ${app.id}: не удалось обновить статус`,
                 );
               }
             }
@@ -385,7 +385,7 @@ function setupReminders({
             errorCount++;
             console.error(
               `Ошибка при обработке записи ${app.id} для автоматического завершения:`,
-              err.message
+              err.message,
             );
           }
         }
@@ -394,16 +394,14 @@ function setupReminders({
         if (completedCount > 0 || errorCount > 0) {
           console.log(
             `[${dayjs().format(
-              "YYYY-MM-DD HH:mm:ss"
-            )}] Автоматическое завершение записей: ${completedCount} завершено, ${errorCount} ошибок`
+              "YYYY-MM-DD HH:mm:ss",
+            )}] Автоматическое завершение записей: ${completedCount} завершено, ${errorCount} ошибок`,
           );
         }
-
-        
       } catch (err) {
         console.error(
           "Критическая ошибка в автоматическом завершении записей:",
-          err
+          err,
         );
       } finally {
         cronLocks.autoComplete = false;
@@ -411,7 +409,7 @@ function setupReminders({
     },
     {
       timezone: config.defaultTimezone,
-    }
+    },
   );
 
   // Напоминание клиентам, которые не подстригались более 21 дня
@@ -434,8 +432,8 @@ function setupReminders({
         if (!clientsForReminder || clientsForReminder.length === 0) {
           console.log(
             `[${dayjs().format(
-              "YYYY-MM-DD HH:mm:ss"
-            )}] Напоминания 21 день: нет клиентов для напоминания`
+              "YYYY-MM-DD HH:mm:ss",
+            )}] Напоминания 21 день: нет клиентов для напоминания`,
           );
           return;
         }
@@ -469,13 +467,13 @@ function setupReminders({
             errorCount++;
             console.error(
               `Ошибка отправки напоминания 21 день пользователю ${client.telegramId}:`,
-              err.message
+              err.message,
             );
 
             // Если пользователь заблокировал бота, не помечаем напоминание как отправленное
             if (err.response && err.response.error_code === 403) {
               console.warn(
-                `Пользователь ${client.telegramId} заблокировал бота, напоминание не отправлено`
+                `Пользователь ${client.telegramId} заблокировал бота, напоминание не отправлено`,
               );
             }
           }
@@ -484,11 +482,9 @@ function setupReminders({
         // Логируем результат
         console.log(
           `[${dayjs().format(
-            "YYYY-MM-DD HH:mm:ss"
-          )}] Напоминания 21 день отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`
+            "YYYY-MM-DD HH:mm:ss",
+          )}] Напоминания 21 день отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`,
         );
-
-       
       } catch (err) {
         console.error("Критическая ошибка в напоминаниях 21 день:", err);
       } finally {
@@ -497,7 +493,7 @@ function setupReminders({
     },
     {
       timezone: config.defaultTimezone,
-    }
+    },
   );
 
   // Ночная очистка старых сессий (30+ дней неактивности) и ограничение их количества.
@@ -520,7 +516,7 @@ function setupReminders({
     },
     {
       timezone: config.defaultTimezone,
-    }
+    },
   );
 
   // Сброс меток рассылки каждую неделю по понедельникам в 00:00 по таймзоне салона
@@ -535,12 +531,14 @@ function setupReminders({
       cronLocks.broadcastMarkReset = true;
       try {
         if (!sheetsService || !sheetsService.clearBroadcastMarks) {
-          console.log("Сервис clearBroadcastMarks недоступен, пропускаем сброс меток");
+          console.log(
+            "Сервис clearBroadcastMarks недоступен, пропускаем сброс меток",
+          );
           return;
         }
         const clearedCount = await sheetsService.clearBroadcastMarks();
         console.log(
-          `[reminders] Сброс меток рассылки завершен. Очищено меток: ${clearedCount}`
+          `[reminders] Сброс меток рассылки завершен. Очищено меток: ${clearedCount}`,
         );
       } catch (err) {
         console.error("Ошибка при сбросе меток рассылки:", err);
@@ -550,7 +548,7 @@ function setupReminders({
     },
     {
       timezone: config.defaultTimezone,
-    }
+    },
   );
 }
 
