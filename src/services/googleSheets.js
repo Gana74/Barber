@@ -84,7 +84,7 @@ function createGoogleAuth(config) {
     config.google.clientEmail,
     undefined,
     config.google.privateKey,
-    ["https://www.googleapis.com/auth/spreadsheets"]
+    ["https://www.googleapis.com/auth/spreadsheets"],
   );
 }
 
@@ -320,19 +320,23 @@ async function createSheetsService(config) {
 
   async function setTipsLink(link) {
     if (!link || typeof link !== "string" || link.trim().length === 0) {
-      throw new Error("Ссылка не может быть пустой");
+      throw new Error("Данные для чаевых не могут быть пустыми");
     }
 
-    // Валидация URL
     const trimmedLink = link.trim();
+
+    // Валидация: может быть либо URL, либо номер телефона
     const isValidUrl =
       trimmedLink.startsWith("http://") ||
       trimmedLink.startsWith("https://") ||
       trimmedLink.startsWith("t.me/");
 
-    if (!isValidUrl || trimmedLink.length < 5) {
+    const isPhoneNumber =
+      /^[\d\s\-+()]+$/.test(trimmedLink) && trimmedLink.length >= 5;
+
+    if (!isValidUrl && !isPhoneNumber) {
       throw new Error(
-        "Ссылка должна начинаться с http://, https:// или t.me/ и быть не менее 5 символов"
+        "Укажите ссылку (http://, https://, t.me/) или номер телефона",
       );
     }
 
@@ -497,7 +501,7 @@ async function createSheetsService(config) {
     });
 
     const existingTitles = new Set(
-      (meta.data.sheets || []).map((s) => s.properties.title)
+      (meta.data.sheets || []).map((s) => s.properties.title),
     );
 
     const requests = [];
@@ -660,7 +664,7 @@ async function createSheetsService(config) {
         (row) =>
           row.date === dateStr &&
           row.status !== "отменена" &&
-          row.status !== "исполнено"
+          row.status !== "исполнено",
       );
 
     dayCache[dateStr] = {
@@ -733,7 +737,7 @@ async function createSheetsService(config) {
   async function updateAppointmentStatus(
     id,
     status,
-    { cancelledAtUtc, completedAtUtc } = {}
+    { cancelledAtUtc, completedAtUtc } = {},
   ) {
     // Комментарий: для простоты читаем весь список и находим строку по id
     const res = await sheets.spreadsheets.values.get({
@@ -909,7 +913,7 @@ async function createSheetsService(config) {
       .filter(
         (row) =>
           String(row.telegramId) === String(telegramId) &&
-          row.status === "активна"
+          row.status === "активна",
       )
       .filter((row) => {
         const dt = dayjs.utc(`${row.date}T${row.timeStart}:00Z`).tz
@@ -1012,7 +1016,7 @@ async function createSheetsService(config) {
         };
       })
       .filter(
-        (row) => row.status === "активна" && row.id && row.date && row.timeEnd
+        (row) => row.status === "активна" && row.id && row.date && row.timeEnd,
       );
   }
 
@@ -1078,7 +1082,7 @@ async function createSheetsService(config) {
     const row = rows.find(
       (r) =>
         r[12] &&
-        String(r[12]).toUpperCase() === String(cancelCode).toUpperCase()
+        String(r[12]).toUpperCase() === String(cancelCode).toUpperCase(),
     );
     if (!row) return null;
 
@@ -1179,7 +1183,10 @@ async function createSheetsService(config) {
       }
 
       // Если метка пуста - клиент доступен
-      if (!client.lastBroadcastSentAtUtc || client.lastBroadcastSentAtUtc.trim() === "") {
+      if (
+        !client.lastBroadcastSentAtUtc ||
+        client.lastBroadcastSentAtUtc.trim() === ""
+      ) {
         return true;
       }
 
@@ -1216,7 +1223,7 @@ async function createSheetsService(config) {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const telegramId = row[2]; // Telegram_ID в индексе 2
-      
+
       if (telegramId && telegramIdsStr.includes(String(telegramId))) {
         const rowNumber = i + 2; // +2 из-за заголовка и сдвига индекса
         // Убедимся, что массив достаточно длинный
@@ -1416,7 +1423,7 @@ async function createSheetsService(config) {
   async function getClientsFor21DayReminder() {
     // Комментарий: получаем клиентов, которым нужно отправить напоминание
     console.log(
-      `[getClientsFor21DayReminder] Начало проверки в ${dayjs().utc().toISOString()}`
+      `[getClientsFor21DayReminder] Начало проверки в ${dayjs().utc().toISOString()}`,
     );
     const clients = await getAllClients();
     const allAppointments = await sheets.spreadsheets.values.get({
@@ -1469,7 +1476,7 @@ async function createSheetsService(config) {
     const clientsForReminder = [];
 
     console.log(
-      `[getClientsFor21DayReminder] Проверка ${clients.length} клиентов, текущее время UTC: ${now.toISOString()}`
+      `[getClientsFor21DayReminder] Проверка ${clients.length} клиентов, текущее время UTC: ${now.toISOString()}`,
     );
 
     for (const client of clients) {
@@ -1488,12 +1495,12 @@ async function createSheetsService(config) {
 
       // Получаем все записи клиента
       const clientAppointments = appointments.filter(
-        (app) => String(app.telegramId) === String(client.telegramId)
+        (app) => String(app.telegramId) === String(client.telegramId),
       );
 
       // Проверяем, что нет активных записей
       const hasActiveAppointments = clientAppointments.some(
-        (app) => app.status === "активна"
+        (app) => app.status === "активна",
       );
       if (hasActiveAppointments) {
         continue;
@@ -1501,7 +1508,7 @@ async function createSheetsService(config) {
 
       // Находим последнюю завершенную запись
       const completedAppointments = clientAppointments.filter(
-        (app) => app.status === "исполнено" && app.completedAtUtc
+        (app) => app.status === "исполнено" && app.completedAtUtc,
       );
 
       let lastHaircutDate = null;
@@ -1536,7 +1543,7 @@ async function createSheetsService(config) {
       // Используем точное сравнение: если прошло 21 день или больше (>= 21 * 24 часа)
       if (diffDays >= 21) {
         console.log(
-          `[getClientsFor21DayReminder] Клиент ${client.telegramId}: последняя запись ${lastHaircutDate.toISOString()}, прошло ${diffDays.toFixed(2)} дней (${daysSinceLastHaircut} полных дней)`
+          `[getClientsFor21DayReminder] Клиент ${client.telegramId}: последняя запись ${lastHaircutDate.toISOString()}, прошло ${diffDays.toFixed(2)} дней (${daysSinceLastHaircut} полных дней)`,
         );
         clientsForReminder.push({
           ...client,
@@ -1547,7 +1554,7 @@ async function createSheetsService(config) {
     }
 
     console.log(
-      `[getClientsFor21DayReminder] Найдено клиентов для напоминания: ${clientsForReminder.length}`
+      `[getClientsFor21DayReminder] Найдено клиентов для напоминания: ${clientsForReminder.length}`,
     );
 
     return clientsForReminder;
@@ -1892,7 +1899,7 @@ async function createSheetsService(config) {
 
     if (removedDayKeys > 0) {
       console.log(
-        `[googleSheets] Cleaned dayCache: removed ${removedDayKeys} expired keys`
+        `[googleSheets] Cleaned dayCache: removed ${removedDayKeys} expired keys`,
       );
     }
   }
@@ -1906,13 +1913,13 @@ async function createSheetsService(config) {
       } catch (e) {
         console.error(
           "[googleSheets] Error during hourly cache cleanup:",
-          e.message || e
+          e.message || e,
         );
       }
     },
     {
       timezone: config.defaultTimezone || "UTC",
-    }
+    },
   );
 
   return {

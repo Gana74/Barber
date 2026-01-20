@@ -185,11 +185,10 @@ function setupReminders({
           (await sheetsService.getBarberPhone()) ||
           config.barberPhone ||
           "+7 XXX XXX-XX-XX";
-
         const barberAddress =
           (await sheetsService.getBarberAddress()) ||
           config.barberAddress ||
-          "Адрес уточняйте у администратора";
+          "Адреса уточняйте у администратора";
 
         let sentCount = 0;
         let errorCount = 0;
@@ -354,12 +353,24 @@ function setupReminders({
                 // Отправляем уведомление клиенту об окончании услуги
                 if (app.telegramId) {
                   try {
-                    const tipsLink = await sheetsService.getTipsLink();
+                    const tipsData = await sheetsService.getTipsLink();
                     const serviceName = app.service || "Услуга";
                     let message = `${serviceName} завершена, благодарю что выбираете меня!`;
 
-                    if (tipsLink && tipsLink.trim().length > 0) {
-                      message += ` В благодарность мастеру можете дать чаевые ${tipsLink}`;
+                    // Добавляем информацию о чаевых (ссылка или номер)
+                    if (tipsData && tipsData.trim().length > 0) {
+                      // Определяем тип данных
+                      const isUrl =
+                        tipsData.startsWith("http://") ||
+                        tipsData.startsWith("https://") ||
+                        tipsData.startsWith("t.me/");
+
+                      if (isUrl) {
+                        message += `\n\nВ благодарность мастеру можете дать чаевые: ${tipsData}`;
+                      } else {
+                        // Это номер телефона
+                        message += `\n\nДля чаевых можете отправить платеж на номер: ${tipsData}`;
+                      }
                     }
 
                     await bot.telegram.sendMessage(

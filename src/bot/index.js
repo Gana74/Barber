@@ -500,7 +500,7 @@ function createBot({ config, sheetsService, calendarService }) {
                 : action === "edit_21day_reminder"
                   ? "Отправьте новый текст для напоминания через 21 день. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel"
                   : action === "edit_tips_link"
-                    ? "Отправьте новую ссылку на чаевые (должна начинаться с http://, https:// или t.me/). Для отмены напишите /admin_cancel"
+                    ? "Отправьте ссылку на чаевые (http://, https://, t.me/) или номер телефона. Для отмены напишите /admin_cancel"
                     : action === "edit_contacts"
                       ? "Отправьте контакты в формате:\nТелефон (первая строка)\nАдрес (вторая строка)\n\nДля отмены напишите /admin_cancel"
                       : "Неизвестное действие",
@@ -638,17 +638,17 @@ function createBot({ config, sheetsService, calendarService }) {
   bot.hears("Редактировать ссылку на чаевые", async (ctx) => {
     if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
-      // Показываем текущую ссылку
+      // Показываем текущие данные для чаевых
       try {
-        const currentLink = await sheetsService.getTipsLink();
+        const currentTips = await sheetsService.getTipsLink();
         await ctx.reply(
-          `Текущая ссылка на чаевые:\n\n${
-            currentLink || "не установлена"
-          }\n\nОтправьте новую ссылку (должна начинаться с http://, https:// или t.me/). Для отмены напишите /admin_cancel`,
+          `Текущие данные для чаевых:\n\n${
+            currentTips || "не установлены"
+          }\n\nОтправьте новую ссылку (http://, https://, t.me/) или номер телефона. Для отмены напишите /admin_cancel`,
         );
         await handleAdminAction(ctx, "edit_tips_link");
       } catch (err) {
-        await ctx.reply(`Ошибка при получении текущей ссылки: ${err.message}`);
+        await ctx.reply(`Ошибка при получении данных: ${err.message}`);
       }
     }
   });
@@ -1457,45 +1457,52 @@ function createBot({ config, sheetsService, calendarService }) {
     }
 
     if (action === "edit_tips_link") {
-      const link = text;
-      if (!link || link.trim().length === 0) {
+      const trimmedInput = text.trim();
+
+      if (!trimmedInput || trimmedInput.length === 0) {
         await ctx.reply(
-          "Ссылка не может быть пустой. /admin_cancel для отмены.",
+          "Данные не могут быть пустыми. /admin_cancel для отмены.",
         );
         return;
       }
 
-      // Валидация URL
-      const trimmedLink = link.trim();
+      // Валидация: может быть либо URL, либо номер телефона
       const isValidUrl =
-        trimmedLink.startsWith("http://") ||
-        trimmedLink.startsWith("https://") ||
-        trimmedLink.startsWith("t.me/");
+        trimmedInput.startsWith("http://") ||
+        trimmedInput.startsWith("https://") ||
+        trimmedInput.startsWith("t.me/");
 
-      if (!isValidUrl || trimmedLink.length < 5) {
+      const isPhoneNumber =
+        /^[\d\s\-+()]+$/.test(trimmedInput) && trimmedInput.length >= 5;
+
+      if (!isValidUrl && !isPhoneNumber) {
         await ctx.reply(
-          "Ссылка должна начинаться с http://, https:// или t.me/ и быть не менее 5 символов. /admin_cancel для отмены.",
+          "Укажите ссылку (http://, https://, t.me/) или номер телефона. /admin_cancel для отмены.",
         );
         return;
       }
 
       try {
-        await sheetsService.setTipsLink(trimmedLink);
+        await sheetsService.setTipsLink(trimmedInput);
 
         // Логирование действия админа
         logAdminAction(
           ctx.from.id,
           "admin_edit_tips_link",
-          { linkLength: trimmedLink.length },
+          {
+            isLink: isValidUrl,
+            isPhone: isPhoneNumber,
+          },
           "success",
         );
 
+        const typeText = isValidUrl ? "Ссылка" : "Номер телефона";
         await ctx.reply(
-          `Ссылка на чаевые успешно обновлена!\n\nНовая ссылка:\n${trimmedLink}`,
+          `✅ ${typeText} для чаевых успешно обновлен!\n\n${trimmedInput}`,
         );
       } catch (err) {
         await ctx.reply(
-          `Ошибка при сохранении ссылки: ${err.message}\n/admin_cancel для отмены.`,
+          `Ошибка при сохранении: ${err.message}\n/admin_cancel для отмены.`,
         );
         logError(
           ctx.from.id,
