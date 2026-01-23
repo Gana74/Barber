@@ -5,7 +5,7 @@ function createGoogleAuthForCalendar(config) {
     config.google.clientEmail,
     undefined,
     config.google.privateKey,
-    ["https://www.googleapis.com/auth/calendar"]
+    ["https://www.googleapis.com/auth/calendar"],
   );
 }
 
@@ -36,6 +36,10 @@ async function createCalendarService(config) {
               appointmentId: appointment.id,
             },
           },
+          reminders: {
+            useDefault: false,
+            overrides: [],
+          },
         },
       });
 
@@ -43,7 +47,7 @@ async function createCalendarService(config) {
     } catch (err) {
       console.error(
         "googleCalendar.createEventForAppointment error:",
-        err.message || err
+        err.message || err,
       );
       return null;
     }
@@ -75,7 +79,7 @@ async function createCalendarService(config) {
     } catch (err) {
       console.error(
         "googleCalendar.findEventByAppointmentId error:",
-        err.message || err
+        err.message || err,
       );
       return null;
     }
@@ -91,7 +95,7 @@ async function createCalendarService(config) {
     } catch (err) {
       console.error(
         "googleCalendar.deleteEventForAppointmentId error:",
-        err.message || err
+        err.message || err,
       );
       return false;
     }
