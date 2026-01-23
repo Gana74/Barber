@@ -25,7 +25,7 @@ function createCalendarKeyboard(
   baseDate,
   timezone,
   allowedMonths,
-  availableDates
+  availableDates,
 ) {
   const start = dayjs(baseDate).tz(timezone).startOf("month");
   const end = dayjs(baseDate).tz(timezone).endOf("month");
@@ -74,8 +74,7 @@ function createCalendarKeyboard(
         isCurrentMonth &&
         monthAllowed &&
         !isPast &&
-        (!availableDates ||
-          availableDates.has(day.format("YYYY-MM-DD")));
+        (!availableDates || availableDates.has(day.format("YYYY-MM-DD")));
       const label = showDate ? `${day.date()}` : " ";
       const callback = showDate
         ? `date:${day.format("YYYY-MM-DD")}`
@@ -119,7 +118,9 @@ async function buildAvailableDateSet({
 
   // диапазон от первого разрешённого месяца до последнего
   const monthStarts = allowedMonths.map((k) => dayjs.tz(`${k}-01`, timezone));
-  const rangeStart = monthStarts.reduce((min, d) => (d.isBefore(min) ? d : min));
+  const rangeStart = monthStarts.reduce((min, d) =>
+    d.isBefore(min) ? d : min,
+  );
   const rangeEnd = monthStarts.reduce((max, d) => {
     const end = d.endOf("month");
     return end.isAfter(max) ? end : max;
@@ -127,7 +128,7 @@ async function buildAvailableDateSet({
 
   const today = dayjs().tz(timezone).startOf("day");
   let cursor = rangeStart.startOf("day");
-  
+
   // Проверяем рабочие часы для всех дат в разрешенных месяцах
   while (!cursor.isAfter(rangeEnd)) {
     const monthKey = monthKeyFromDate(cursor);
@@ -171,7 +172,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           if (st && st.banned) {
             await ctx.reply(
               "Ваш аккаунт заблокирован для записи. Свяжитесь с администратором.",
-              Markup.removeKeyboard()
+              Markup.removeKeyboard(),
             );
             try {
               await ctx.scene.leave();
@@ -196,7 +197,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
       await ctx.reply(
         "Выбери услугу:",
-        Markup.keyboard(buttons).oneTime().resize()
+        Markup.keyboard(buttons).oneTime().resize(),
       );
       return ctx.wizard.next();
     },
@@ -215,7 +216,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
         await ctx.reply(
           "Ок, возвращаю в главное меню.",
-          Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize()
+          Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize(),
         );
 
         return;
@@ -256,7 +257,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         now,
         timezone,
         allowed,
-        availableDates
+        availableDates,
       );
 
       await ctx.reply("Выбери дату:", calendar);
@@ -274,7 +275,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         }
         await ctx.reply(
           "Ок, возвращаю в главное меню.",
-          Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize()
+          Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize(),
         );
         return;
       }
@@ -291,7 +292,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         delete ctx.wizard.state.booking.dateStr;
         delete ctx.wizard.state.booking.availableDates;
         await ctx.answerCbQuery("Возвращаемся к выбору услуги");
-        
+
         // Возвращаемся к шагу выбора услуги
         const services = bookingService.getServiceList();
         const buttons = services.map((s) => {
@@ -299,12 +300,12 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           return [s.name + priceText];
         });
         buttons.push(["Назад ⬅️"]);
-        
+
         await ctx.reply(
           "Выбери услугу:",
-          Markup.keyboard(buttons).oneTime().resize()
+          Markup.keyboard(buttons).oneTime().resize(),
         );
-        
+
         return ctx.wizard.selectStep(1);
       }
 
@@ -339,7 +340,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           base,
           timezone,
           allowed,
-          availableDates
+          availableDates,
         );
 
         try {
@@ -365,47 +366,49 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       const monthKey = monthKeyFromDate(dateStr);
       const today = dayjs().tz(timezone).startOf("day");
       const selectedDate = dayjs.tz(dateStr, timezone).startOf("day");
-      
+
       if (!allowed.includes(monthKey) || selectedDate.isBefore(today, "day")) {
         await ctx.answerCbQuery("Выбрана недоступная дата");
         const availableDates = new Set(
-          (ctx.wizard.state.booking && ctx.wizard.state.booking.availableDates) ||
-            []
+          (ctx.wizard.state.booking &&
+            ctx.wizard.state.booking.availableDates) ||
+            [],
         );
         const base = dayjs.tz(dateStr, timezone);
         const calendar = createCalendarKeyboard(
           base,
           timezone,
           allowed,
-          availableDates
+          availableDates,
         );
         try {
           await ctx.reply("Выбери дату:", calendar);
         } catch (e) {}
         return;
       }
-      
+
       // Проверяем рабочие часы для выбранной даты
       const workHours = await sheetsService.getWorkHoursForDate(dateStr);
       if (!workHours || !workHours.start || !workHours.end) {
         await ctx.answerCbQuery("В этот день выходной");
         const availableDates = new Set(
-          (ctx.wizard.state.booking && ctx.wizard.state.booking.availableDates) ||
-            []
+          (ctx.wizard.state.booking &&
+            ctx.wizard.state.booking.availableDates) ||
+            [],
         );
         const base = dayjs.tz(dateStr, timezone);
         const calendar = createCalendarKeyboard(
           base,
           timezone,
           allowed,
-          availableDates
+          availableDates,
         );
         try {
           await ctx.reply("Выбери дату:", calendar);
         } catch (e) {}
         return;
       }
-      
+
       ctx.wizard.state.booking.dateStr = dateStr;
 
       await ctx.answerCbQuery();
@@ -414,7 +417,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
       const { slots } = await bookingService.getAvailableSlotsForService(
         serviceKey,
-        dateStr
+        dateStr,
       );
 
       if (!slots.length) {
@@ -428,7 +431,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           await ctx.reply("В этот день у меня выходной. Выбери другую дату.");
         } else {
           await ctx.reply(
-            `На этот день нет свободных слотов. Рабочие часы: ${wh.start}–${wh.end}. Попробуй выбрать другую дату.`
+            `На этот день нет свободных слотов. Рабочие часы: ${wh.start}–${wh.end}. Попробуй выбрать другую дату.`,
           );
         }
 
@@ -437,14 +440,15 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         const allowed = getAllowedMonthKeys(timezone);
         const base = dayjs.tz(dateStr, timezone);
         const availableDates = new Set(
-          (ctx.wizard.state.booking && ctx.wizard.state.booking.availableDates) ||
-            []
+          (ctx.wizard.state.booking &&
+            ctx.wizard.state.booking.availableDates) ||
+            [],
         );
         const calendar = createCalendarKeyboard(
           base,
           timezone,
           allowed,
-          availableDates
+          availableDates,
         );
 
         try {
@@ -499,14 +503,15 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           dayjs().tz(timezone).format("YYYY-MM-DD");
         const base = dayjs.tz(dateBase, timezone);
         const availableDates = new Set(
-          (ctx.wizard.state.booking && ctx.wizard.state.booking.availableDates) ||
-            []
+          (ctx.wizard.state.booking &&
+            ctx.wizard.state.booking.availableDates) ||
+            [],
         );
         const calendar = createCalendarKeyboard(
           base,
           timezone,
           allowed,
-          availableDates
+          availableDates,
         );
 
         try {
@@ -520,7 +525,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
       if (!data.startsWith("time:")) {
         console.log(
-          "DEBUG: Data does not start with 'time:', answering callback and staying on same step"
+          "DEBUG: Data does not start with 'time:', answering callback and staying on same step",
         );
         await ctx.answerCbQuery();
         return;
@@ -534,7 +539,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       const name = ctx.from.first_name || "";
 
       await ctx.reply(
-        "Введи, пожалуйста, своё имя (можно оставить как в профиле), затем отправь свой контакт по кнопке ниже."
+        "Введи, пожалуйста, своё имя (можно оставить как в профиле), затем отправь свой контакт по кнопке ниже.",
       );
       ctx.wizard.state.booking.step = "name";
 
@@ -554,7 +559,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           ctx.wizard.state.booking.timeStr = timeStr;
           await ctx.answerCbQuery();
           await ctx.reply(
-            "Введи, пожалуйста, своё имя (можно оставить как в профиле), затем отправь свой контакт по кнопке ниже."
+            "Введи, пожалуйста, своё имя (можно оставить как в профиле), затем отправь свой контакт по кнопке ниже.",
           );
           ctx.wizard.state.booking.step = "name";
           return; // Остаемся на том же шаге
@@ -568,14 +573,14 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           const { serviceKey, dateStr } = ctx.wizard.state.booking;
           const { slots } = await bookingService.getAvailableSlotsForService(
             serviceKey,
-            dateStr
+            dateStr,
           );
 
           const keyboard = [];
           let row = [];
           slots.forEach((slot, idx) => {
             row.push(
-              Markup.button.callback(slot.timeStr, `time:${slot.timeStr}`)
+              Markup.button.callback(slot.timeStr, `time:${slot.timeStr}`),
             );
             if ((idx + 1) % 4 === 0) {
               keyboard.push(row);
@@ -601,7 +606,8 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           booking.phone = phone.startsWith("+") ? phone : `+${phone}`;
           booking.step = "comment";
           await ctx.reply(
-            'Если хочешь, добавь комментарий к записи. Или напиши "-".'
+            'Если хочешь, добавь комментарий к записи. Или напиши "-".',
+            Markup.removeKeyboard(),
           );
           return;
         }
@@ -619,7 +625,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         // Валидация имени: длина 1-50 символов
         if (!validateName(nameInput, 1, 50)) {
           await ctx.reply(
-            "Имя должно содержать от 1 до 50 символов и состоять только из букв, пробелов, дефисов и апострофов. Попробуйте снова."
+            "Имя должно содержать от 1 до 50 символов и состоять только из букв, пробелов, дефисов и апострофов. Попробуйте снова.",
           );
           return;
         }
@@ -633,7 +639,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
             [Markup.button.contactRequest("Отправить контакт 📱")],
           ])
             .oneTime()
-            .resize()
+            .resize(),
         );
         return;
       }
@@ -642,7 +648,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         // Проверяем, что это текстовое сообщение
         if (!ctx.message || !ctx.message.text) {
           await ctx.reply(
-            'Пожалуйста, введите комментарий текстом или напишите "-" для пропуска.'
+            'Пожалуйста, введите комментарий текстом или напишите "-" для пропуска.',
           );
           return;
         }
@@ -657,7 +663,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           const sanitizedComment = sanitizeText(commentInput, 200);
           if (sanitizedComment.length === 0 && commentInput.length > 0) {
             await ctx.reply(
-              "Комментарий содержит недопустимые символы. Попробуйте снова или напишите '-' для пропуска."
+              "Комментарий содержит недопустимые символы. Попробуйте снова или напишите '-' для пропуска.",
             );
             return;
           }
@@ -682,7 +688,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           Markup.inlineKeyboard([
             [Markup.button.callback("Подтвердить ✅", "confirm")],
             [Markup.button.callback("Отмена ❌", "cancel")],
-          ])
+          ]),
         );
 
         // Комментарий: переводим визард на следующий шаг, чтобы обработать callback confirm/cancel
@@ -692,7 +698,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
       await ctx.reply(
         "Что-то пошло не так, начнём заново: /book",
-        Markup.removeKeyboard()
+        Markup.removeKeyboard(),
       );
       return ctx.scene.leave();
     },
@@ -710,7 +716,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         await ctx.answerCbQuery("Запись отменена.");
         await ctx.reply(
           "Ок, ничего не записываю. Если нужно — начни заново: /book",
-          Markup.removeKeyboard()
+          Markup.removeKeyboard(),
         );
         return ctx.scene.leave();
       }
@@ -748,7 +754,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
             dateStr,
             timeStr,
           },
-          "failed"
+          "failed",
         );
 
         if (result.reason === "limit_exceeded") {
@@ -758,18 +764,18 @@ function createBookingScene({ bookingService, sheetsService, config }) {
               `У вас уже ${existingCount} активных записей.\n` +
               `Ограничение: не более 3 активных записей от одного пользователя.\n\n` +
               `Пожалуйста, отмените ненужные записи через "Мои записи" или свяжитесь с администрацией.`,
-            Markup.removeKeyboard()
+            Markup.removeKeyboard(),
           );
           await ctx.reply(
             "Вы вернулись в главное меню.",
-            Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize()
+            Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize(),
           );
           return ctx.scene.leave();
         }
 
         if (result.reason === "slot_taken") {
           await ctx.reply(
-            "К сожалению, пока мы бронировали, это время уже заняли. Выбери другое время на эту же дату."
+            "К сожалению, пока мы бронировали, это время уже заняли. Выбери другое время на эту же дату.",
           );
 
           // Возвращаем к выбору времени, сохраняя все остальные данные
@@ -781,12 +787,12 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           // Получаем обновленные доступные слоты
           const { slots } = await bookingService.getAvailableSlotsForService(
             serviceKey,
-            dateStr
+            dateStr,
           );
 
           if (!slots.length) {
             await ctx.reply(
-              "На этот день больше нет свободных слотов. Попробуй выбрать другую дату командой /book."
+              "На этот день больше нет свободных слотов. Попробуй выбрать другую дату командой /book.",
             );
             return ctx.scene.leave();
           }
@@ -796,7 +802,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
           slots.forEach((slot, idx) => {
             row.push(
-              Markup.button.callback(slot.timeStr, `time:${slot.timeStr}`)
+              Markup.button.callback(slot.timeStr, `time:${slot.timeStr}`),
             );
             if ((idx + 1) % 4 === 0) {
               keyboard.push(row);
@@ -815,13 +821,13 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         } else {
           if (result.reason === "closed") {
             await ctx.reply(
-              "Нельзя создать запись: в этот день у меня выходной. Попробуй другую дату."
+              "Нельзя создать запись: в этот день у меня выходной. Попробуй другую дату.",
             );
             return ctx.scene.leave();
           }
           await ctx.reply(
             "Не удалось создать запись из-за ошибки. Попробуй ещё раз позже.",
-            Markup.removeKeyboard()
+            Markup.removeKeyboard(),
           );
           return ctx.scene.leave();
         }
@@ -840,7 +846,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           timeStart: appointment.timeStart,
           timeEnd: appointment.timeEnd,
         },
-        "success"
+        "success",
       );
 
       const confirmation = [
@@ -858,10 +864,10 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           [
             Markup.button.callback(
               "Отменить эту запись ❌",
-              `cancel_app:${appointment.id}`
+              `cancel_app:${appointment.id}`,
             ),
           ],
-        ])
+        ]),
       );
 
       // Уведомление менеджеру
@@ -884,11 +890,11 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       // Возвращаем пользователя в главное меню
       await ctx.reply(
         "Запись завершена! Вы вернулись в главное меню.",
-        Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize()
+        Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize(),
       );
 
       return ctx.scene.leave();
-    }
+    },
   );
 
   return bookingScene;
