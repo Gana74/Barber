@@ -4,18 +4,25 @@
 const { google } = require("googleapis");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
+const timezonePlugin = require("dayjs/plugin/timezone");
 const cron = require("node-cron");
 
 dayjs.extend(utc);
+dayjs.extend(timezonePlugin);
 
 // Комментарий: имена листов в таблице
 const SHEET_NAMES = {
   SETTINGS: "Настройки",
   SCHEDULE: "Расписание",
   APPOINTMENTS: "Записи",
+  APPOINTMENTS_ARCHIVE: "Записи_Архив",
   CLIENTS: "Клиенты",
   WORKHOURS: "WorkHours",
 };
+
+// Комментарий: константы для архивирования
+const ARCHIVE_MONTHS = 2; // период хранения активных записей (месяцев)
+const ACTIVE_RANGE = "A2:Q500"; // уменьшенный диапазон для активных записей
 
 // Комментарий: заголовки на русском
 const HEADERS = {
@@ -29,6 +36,24 @@ const HEADERS = {
     "Примечание",
   ],
   [SHEET_NAMES.APPOINTMENTS]: [
+    "ID_записи",
+    "Создано_UTC",
+    "Услуга",
+    "Цена",
+    "Дата",
+    "Время_начала",
+    "Время_окончания",
+    "Имя_клиента",
+    "Телефон",
+    "Username_Telegram",
+    "Комментарий",
+    "Статус",
+    "Код_отмены",
+    "Telegram_ID",
+    "Исполнено_UTC",
+    "Отменено_UTC",
+  ],
+  [SHEET_NAMES.APPOINTMENTS_ARCHIVE]: [
     "ID_записи",
     "Создано_UTC",
     "Услуга",
@@ -91,6 +116,78 @@ function createGoogleAuth(config) {
 async function createSheetsService(config) {
   const auth = createGoogleAuth(config);
   const sheets = google.sheets({ version: "v4", auth });
+
+  // Комментарий: вспомогательная функция для парсинга строки записи в объект
+  function parseAppointmentRow(row) {
+    const [
+      ID_записи,
+      Создано_UTC,
+      Услуга,
+      Цена,
+      Дата,
+      Время_начала,
+      Время_окончания,
+      Имя_клиента,
+      Телефон,
+      Username_Telegram,
+      Комментарий,
+      Статус,
+      Код_отмены,
+      Telegram_ID,
+      Исполнено_UTC,
+      Отменено_UTC,
+    ] = row;
+    return {
+      id: ID_записи,
+      createdAtUtc: Создано_UTC,
+      service: Услуга,
+      price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
+      date: Дата,
+      timeStart: Время_начала,
+      timeEnd: Время_окончания,
+      clientName: Имя_клиента,
+      phone: Телефон,
+      username: Username_Telegram,
+      comment: Комментарий,
+      status: Статус,
+      cancelCode: Код_отмены,
+      telegramId: Telegram_ID,
+      completedAtUtc: Исполнено_UTC,
+      cancelledAtUtc: Отменено_UTC,
+    };
+  }
+
+  // Комментарий: вспомогательная функция для чтения всех записей из активных и архива
+  async function getAllAppointmentsFromBothSheets() {
+    const appointments = [];
+
+    // Читаем активные записи
+    try {
+      const activeRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.APPOINTMENTS}!${ACTIVE_RANGE}`,
+      });
+      const activeRows = activeRes.data.values || [];
+      appointments.push(...activeRows.map(parseAppointmentRow));
+    } catch (e) {
+      console.warn("[getAllAppointmentsFromBothSheets] Ошибка при чтении активных записей:", e.message || e);
+    }
+
+    // Читаем архивные записи
+    try {
+      const archiveRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.APPOINTMENTS_ARCHIVE}!A2:Q10000`,
+      });
+      const archiveRows = archiveRes.data.values || [];
+      appointments.push(...archiveRows.map(parseAppointmentRow));
+    } catch (e) {
+      // Если архив еще не создан или пуст, игнорируем ошибку
+      console.warn("[getAllAppointmentsFromBothSheets] Ошибка при чтении архива:", e.message || e);
+    }
+
+    return appointments;
+  }
 
   async function fetchWorkHours() {
     const res = await sheets.spreadsheets.values.get({
@@ -569,6 +666,40 @@ async function createSheetsService(config) {
         },
       });
     }
+
+    // Автоматическая миграция существующих данных в архив (только при первом запуске)
+    // Проверяем, есть ли записи в архиве - если очень мало или нет, выполняем миграцию
+    try {
+      const archiveCheck = await sheets.spreadsheets.values.get({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.APPOINTMENTS_ARCHIVE}!A2:Q10`,
+      });
+      const archiveRows = archiveCheck.data.values || [];
+      
+      // Если в архиве меньше 5 записей, считаем что миграция еще не выполнялась
+      if (archiveRows.length < 5) {
+        console.log(
+          "[ensureSheetsStructure] Запуск автоматической миграции существующих данных в архив",
+        );
+        try {
+          await migrateExistingDataToArchive(ARCHIVE_MONTHS);
+          console.log(
+            "[ensureSheetsStructure] Автоматическая миграция завершена",
+          );
+        } catch (e) {
+          console.error(
+            "[ensureSheetsStructure] Ошибка при автоматической миграции (не критично):",
+            e.message || e,
+          );
+          // Не прерываем инициализацию при ошибке миграции
+        }
+      }
+    } catch (e) {
+      // Если архив еще не создан или пуст, это нормально - миграция выполнится при следующем запуске
+      console.log(
+        "[ensureSheetsStructure] Архив пуст или не создан, миграция будет выполнена позже",
+      );
+    }
   }
 
   function invalidateWorkHoursCache() {
@@ -615,10 +746,10 @@ async function createSheetsService(config) {
       })
       .filter((row) => row.date === dateStr);
 
-    // Читаем Записи
+    // Читаем Записи (только активные, из уменьшенного диапазона)
     const appRes = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+      range: `${SHEET_NAMES.APPOINTMENTS}!${ACTIVE_RANGE}`,
     });
     const appRows = appRes.data.values || [];
     const appointments = appRows
@@ -739,22 +870,48 @@ async function createSheetsService(config) {
     status,
     { cancelledAtUtc, completedAtUtc } = {},
   ) {
-    // Комментарий: для простоты читаем весь список и находим строку по id
-    const res = await sheets.spreadsheets.values.get({
+    // Комментарий: ищем запись по id в обоих листах (сначала активные, потом архив)
+    // Сначала ищем в активных записях
+    const activeRes = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+      range: `${SHEET_NAMES.APPOINTMENTS}!${ACTIVE_RANGE}`,
     });
-    const rows = res.data.values || [];
+    const activeRows = activeRes.data.values || [];
 
     let targetRowIndex = -1;
     let targetDate = null;
+    let sheetName = SHEET_NAMES.APPOINTMENTS;
+    let rows = activeRows;
 
-    rows.forEach((row, idx) => {
+    activeRows.forEach((row, idx) => {
       if (row[0] === id) {
         targetRowIndex = idx;
         targetDate = row[4]; // Дата теперь в индексе 4 (после Цена)
       }
     });
+
+    // Если не найдено в активных, ищем в архиве
+    if (targetRowIndex === -1) {
+      try {
+        const archiveRes = await sheets.spreadsheets.values.get({
+          spreadsheetId: config.google.sheetsId,
+          range: `${SHEET_NAMES.APPOINTMENTS_ARCHIVE}!A2:Q10000`,
+        });
+        const archiveRows = archiveRes.data.values || [];
+        
+        archiveRows.forEach((row, idx) => {
+          if (row[0] === id) {
+            targetRowIndex = idx;
+            targetDate = row[4];
+            sheetName = SHEET_NAMES.APPOINTMENTS_ARCHIVE;
+            rows = archiveRows;
+          }
+        });
+      } catch (e) {
+        // Если архив еще не создан или пуст, игнорируем ошибку
+        console.warn("[updateAppointmentStatus] Ошибка при чтении архива:", e.message || e);
+      }
+    }
 
     if (targetRowIndex === -1) {
       return false;
@@ -774,7 +931,7 @@ async function createSheetsService(config) {
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A${rowNumber}:Q${rowNumber}`,
+      range: `${sheetName}!A${rowNumber}:Q${rowNumber}`,
       valueInputOption: "RAW",
       requestBody: {
         values: [rowValues],
@@ -867,9 +1024,10 @@ async function createSheetsService(config) {
   }
 
   async function getFutureAppointmentsForTelegram(telegramId, timezone) {
+    // Комментарий: читаем только из активных записей (уменьшенный диапазон)
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+      range: `${SHEET_NAMES.APPOINTMENTS}!${ACTIVE_RANGE}`,
     });
     const rows = res.data.values || [];
 
@@ -924,9 +1082,10 @@ async function createSheetsService(config) {
   }
 
   async function getAppointmentsByDate(dateStr) {
+    // Комментарий: читаем только из активных записей (уменьшенный диапазон)
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+      range: `${SHEET_NAMES.APPOINTMENTS}!${ACTIVE_RANGE}`,
     });
     const rows = res.data.values || [];
 
@@ -969,10 +1128,10 @@ async function createSheetsService(config) {
   }
 
   async function getAllActiveAppointments() {
-    // Комментарий: получаем все активные записи для автоматического завершения
+    // Комментарий: получаем все активные записи для автоматического завершения (только из активных, уменьшенный диапазон)
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+      range: `${SHEET_NAMES.APPOINTMENTS}!${ACTIVE_RANGE}`,
     });
     const rows = res.data.values || [];
 
@@ -1021,108 +1180,81 @@ async function createSheetsService(config) {
   }
 
   async function getAppointmentById(id) {
-    // Комментарий: ищем одну конкретную запись по id
-    const res = await sheets.spreadsheets.values.get({
+    // Комментарий: ищем одну конкретную запись по id (сначала в активных, потом в архиве)
+    // Сначала ищем в активных записях
+    const activeRes = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+      range: `${SHEET_NAMES.APPOINTMENTS}!${ACTIVE_RANGE}`,
     });
-    const rows = res.data.values || [];
+    const activeRows = activeRes.data.values || [];
+    const activeRow = activeRows.find((r) => r[0] === id);
+    
+    if (activeRow) {
+      return parseAppointmentRow(activeRow);
+    }
 
-    const row = rows.find((r) => r[0] === id);
-    if (!row) return null;
+    // Если не найдено в активных, ищем в архиве
+    try {
+      const archiveRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.APPOINTMENTS_ARCHIVE}!A2:Q10000`,
+      });
+      const archiveRows = archiveRes.data.values || [];
+      const archiveRow = archiveRows.find((r) => r[0] === id);
+      
+      if (archiveRow) {
+        return parseAppointmentRow(archiveRow);
+      }
+    } catch (e) {
+      // Если архив еще не создан или пуст, игнорируем ошибку
+      console.warn("[getAppointmentById] Ошибка при чтении архива:", e.message || e);
+    }
 
-    const [
-      ID_записи,
-      Создано_UTC,
-      Услуга,
-      Цена,
-      Дата,
-      Время_начала,
-      Время_окончания,
-      Имя_клиента,
-      Телефон,
-      Username_Telegram,
-      Комментарий,
-      Статус,
-      Код_отмены,
-      Telegram_ID,
-      Исполнено_UTC,
-      Отменено_UTC,
-    ] = row;
-
-    return {
-      id: ID_записи,
-      createdAtUtc: Создано_UTC,
-      service: Услуга,
-      price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
-      date: Дата,
-      timeStart: Время_начала,
-      timeEnd: Время_окончания,
-      clientName: Имя_клиента,
-      phone: Телефон,
-      username: Username_Telegram,
-      comment: Комментарий,
-      status: Статус,
-      cancelCode: Код_отмены,
-      telegramId: Telegram_ID,
-      completedAtUtc: Исполнено_UTC,
-      cancelledAtUtc: Отменено_UTC,
-    };
+    return null;
   }
 
   async function getAppointmentByCancelCode(cancelCode) {
-    // Комментарий: ищем запись по коду отмены
-    const res = await sheets.spreadsheets.values.get({
+    // Комментарий: ищем запись по коду отмены (сначала в активных, потом в архиве)
+    // Сначала ищем в активных записях
+    const activeRes = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+      range: `${SHEET_NAMES.APPOINTMENTS}!${ACTIVE_RANGE}`,
     });
-    const rows = res.data.values || [];
-
+    const activeRows = activeRes.data.values || [];
+    
     // Код отмены находится в колонке с индексом 12 (после добавления колонки Цена)
-    const row = rows.find(
+    const activeRow = activeRows.find(
       (r) =>
         r[12] &&
         String(r[12]).toUpperCase() === String(cancelCode).toUpperCase(),
     );
-    if (!row) return null;
+    
+    if (activeRow) {
+      return parseAppointmentRow(activeRow);
+    }
 
-    const [
-      ID_записи,
-      Создано_UTC,
-      Услуга,
-      Цена,
-      Дата,
-      Время_начала,
-      Время_окончания,
-      Имя_клиента,
-      Телефон,
-      Username_Telegram,
-      Комментарий,
-      Статус,
-      Код_отмены,
-      Telegram_ID,
-      Исполнено_UTC,
-      Отменено_UTC,
-    ] = row;
+    // Если не найдено в активных, ищем в архиве
+    try {
+      const archiveRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.APPOINTMENTS_ARCHIVE}!A2:Q10000`,
+      });
+      const archiveRows = archiveRes.data.values || [];
+      const archiveRow = archiveRows.find(
+        (r) =>
+          r[12] &&
+          String(r[12]).toUpperCase() === String(cancelCode).toUpperCase(),
+      );
+      
+      if (archiveRow) {
+        return parseAppointmentRow(archiveRow);
+      }
+    } catch (e) {
+      // Если архив еще не создан или пуст, игнорируем ошибку
+      console.warn("[getAppointmentByCancelCode] Ошибка при чтении архива:", e.message || e);
+    }
 
-    return {
-      id: ID_записи,
-      createdAtUtc: Создано_UTC,
-      service: Услуга,
-      price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
-      date: Дата,
-      timeStart: Время_начала,
-      timeEnd: Время_окончания,
-      clientName: Имя_клиента,
-      phone: Телефон,
-      username: Username_Telegram,
-      comment: Комментарий,
-      status: Статус,
-      cancelCode: Код_отмены,
-      telegramId: Telegram_ID,
-      completedAtUtc: Исполнено_UTC,
-      cancelledAtUtc: Отменено_UTC,
-    };
+    return null;
   }
 
   async function getAllClients() {
@@ -1371,106 +1503,20 @@ async function createSheetsService(config) {
   }
 
   async function getAllAppointmentsForClient(telegramId) {
-    // Комментарий: получаем все записи клиента (включая завершенные и отмененные)
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
-    });
-    const rows = res.data.values || [];
-
-    return rows
-      .map((row) => {
-        const [
-          ID_записи,
-          Создано_UTC,
-          Услуга,
-          Цена,
-          Дата,
-          Время_начала,
-          Время_окончания,
-          Имя_клиента,
-          Телефон,
-          Username_Telegram,
-          Комментарий,
-          Статус,
-          Код_отмены,
-          Telegram_ID,
-          Исполнено_UTC,
-          Отменено_UTC,
-        ] = row;
-        return {
-          id: ID_записи,
-          createdAtUtc: Создано_UTC,
-          service: Услуга,
-          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
-          date: Дата,
-          timeStart: Время_начала,
-          timeEnd: Время_окончания,
-          clientName: Имя_клиента,
-          phone: Телефон,
-          username: Username_Telegram,
-          comment: Комментарий,
-          status: Статус,
-          cancelCode: Код_отмены,
-          telegramId: Telegram_ID,
-          completedAtUtc: Исполнено_UTC,
-          cancelledAtUtc: Отменено_UTC,
-        };
-      })
-      .filter((row) => String(row.telegramId) === String(telegramId));
+    // Комментарий: получаем все записи клиента (включая завершенные и отмененные) из активных и архива
+    const appointments = await getAllAppointmentsFromBothSheets();
+    return appointments.filter((row) => String(row.telegramId) === String(telegramId));
   }
 
   async function getClientsFor21DayReminder() {
-    // Комментарий: получаем клиентов, которым нужно отправить напоминание
+    // Комментарий: получаем клиентов, которым нужно отправить напоминание (используем активные и архив)
     console.log(
       `[getClientsFor21DayReminder] Начало проверки в ${dayjs().utc().toISOString()}`,
     );
     const clients = await getAllClients();
-    const allAppointments = await sheets.spreadsheets.values.get({
-      spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
-    });
-    const appointmentRows = allAppointments.data.values || [];
-
-    // Преобразуем все записи в объекты
-    const appointments = appointmentRows.map((row) => {
-      const [
-        ID_записи,
-        Создано_UTC,
-        Услуга,
-        Цена,
-        Дата,
-        Время_начала,
-        Время_окончания,
-        Имя_клиента,
-        Телефон,
-        Username_Telegram,
-        Комментарий,
-        Статус,
-        Код_отмены,
-        Telegram_ID,
-        Исполнено_UTC,
-        Отменено_UTC,
-      ] = row;
-      return {
-        id: ID_записи,
-        createdAtUtc: Создано_UTC,
-        service: Услуга,
-        price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
-        date: Дата,
-        timeStart: Время_начала,
-        timeEnd: Время_окончания,
-        clientName: Имя_клиента,
-        phone: Телефон,
-        username: Username_Telegram,
-        comment: Комментарий,
-        status: Статус,
-        cancelCode: Код_отмены,
-        telegramId: Telegram_ID,
-        completedAtUtc: Исполнено_UTC,
-        cancelledAtUtc: Отменено_UTC,
-      };
-    });
+    
+    // Получаем все записи из обоих листов
+    const appointments = await getAllAppointmentsFromBothSheets();
 
     const now = dayjs().utc();
     const clientsForReminder = [];
@@ -1632,56 +1678,14 @@ async function createSheetsService(config) {
   }
 
   async function getCompletedAppointments({ startDate, endDate } = {}) {
-    // Комментарий: получаем все завершенные записи за период
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
-    });
-    const rows = res.data.values || [];
-
+    // Комментарий: получаем все завершенные записи за период (из активных и архива)
     const timezone = await getTimezone();
 
-    // Преобразуем все записи в объекты
-    let appointments = rows
-      .map((row) => {
-        const [
-          ID_записи,
-          Создано_UTC,
-          Услуга,
-          Цена,
-          Дата,
-          Время_начала,
-          Время_окончания,
-          Имя_клиента,
-          Телефон,
-          Username_Telegram,
-          Комментарий,
-          Статус,
-          Код_отмены,
-          Telegram_ID,
-          Исполнено_UTC,
-          Отменено_UTC,
-        ] = row;
-        return {
-          id: ID_записи,
-          createdAtUtc: Создано_UTC,
-          service: Услуга,
-          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
-          date: Дата,
-          timeStart: Время_начала,
-          timeEnd: Время_окончания,
-          clientName: Имя_клиента,
-          phone: Телефон,
-          username: Username_Telegram,
-          comment: Комментарий,
-          status: Статус,
-          cancelCode: Код_отмены,
-          telegramId: Telegram_ID,
-          completedAtUtc: Исполнено_UTC,
-          cancelledAtUtc: Отменено_UTC,
-        };
-      })
-      .filter((row) => row.status === "исполнено");
+    // Получаем все записи из обоих листов
+    let appointments = await getAllAppointmentsFromBothSheets();
+    
+    // Фильтруем только завершенные
+    appointments = appointments.filter((row) => row.status === "исполнено");
 
     // Фильтруем по датам, если указаны
     if (startDate || endDate) {
@@ -1739,54 +1743,13 @@ async function createSheetsService(config) {
       return [];
     }
 
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
-    });
-    const rows = res.data.values || [];
-
     const timezone = await getTimezone();
 
-    let appointments = rows
-      .map((row) => {
-        const [
-          ID_записи,
-          Создано_UTC,
-          Услуга,
-          Цена,
-          Дата,
-          Время_начала,
-          Время_окончания,
-          Имя_клиента,
-          Телефон,
-          Username_Telegram,
-          Комментарий,
-          Статус,
-          Код_отмены,
-          Telegram_ID,
-          Исполнено_UTC,
-          Отменено_UTC,
-        ] = row;
-        return {
-          id: ID_записи,
-          createdAtUtc: Создано_UTC,
-          service: Услуга,
-          price: Цена ? (isNaN(Number(Цена)) ? null : Number(Цена)) : null,
-          date: Дата,
-          timeStart: Время_начала,
-          timeEnd: Время_окончания,
-          clientName: Имя_клиента,
-          phone: Телефон,
-          username: Username_Telegram,
-          comment: Комментарий,
-          status: Статус,
-          cancelCode: Код_отмены,
-          telegramId: Telegram_ID,
-          completedAtUtc: Исполнено_UTC,
-          cancelledAtUtc: Отменено_UTC,
-        };
-      })
-      .filter((row) => row.status === "отменена" && row.cancelledAtUtc);
+    // Получаем все записи из обоих листов
+    let appointments = await getAllAppointmentsFromBothSheets();
+    
+    // Фильтруем только отмененные с датой отмены
+    appointments = appointments.filter((row) => row.status === "отменена" && row.cancelledAtUtc);
 
     // Фильтруем по дате отмены (Отменено_UTC), приведённой к таймзоне салона
     if (startDate || endDate) {
@@ -1922,6 +1885,213 @@ async function createSheetsService(config) {
     },
   );
 
+  // Ежемесячная ротация записей в архив (3:00 ночи, 1-го числа каждого месяца)
+  cron.schedule(
+    "0 3 1 * *",
+    async () => {
+      try {
+        console.log(
+          `[googleSheets] Запуск ежемесячной ротации записей в архив (${dayjs().format("YYYY-MM-DD HH:mm")})`,
+        );
+        const result = await archiveOldAppointments(ARCHIVE_MONTHS);
+        console.log(
+          `[googleSheets] Ротация завершена. Перенесено записей: ${result.archived}, ошибок: ${result.errors.length}`,
+        );
+      } catch (e) {
+        console.error(
+          "[googleSheets] Критическая ошибка при ежемесячной ротации:",
+          e.message || e,
+        );
+      }
+    },
+    {
+      timezone: config.defaultTimezone || "UTC",
+    },
+  );
+
+  // Комментарий: архивирование старых записей
+  async function archiveOldAppointments(monthsToKeep = ARCHIVE_MONTHS) {
+    const timezone = await getTimezone();
+    const now = dayjs().tz(timezone);
+    const cutoffDate = now.subtract(monthsToKeep, "month").startOf("day");
+
+    console.log(
+      `[archiveOldAppointments] Начало архивирования. Граничная дата: ${cutoffDate.format("YYYY-MM-DD")}`,
+    );
+
+    try {
+      // Читаем все активные записи
+      const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.APPOINTMENTS}!A2:Q2000`,
+      });
+      const rows = res.data.values || [];
+
+      if (rows.length === 0) {
+        console.log("[archiveOldAppointments] Нет записей для архивирования");
+        return { archived: 0, errors: [] };
+      }
+
+      const appointmentsToArchive = [];
+      const rowIndicesToDelete = [];
+
+      // Определяем, какие записи нужно архивировать
+      rows.forEach((row, idx) => {
+        if (!row[0]) return; // Пропускаем пустые строки
+
+        const appointment = parseAppointmentRow(row);
+        let dateToCheck = null;
+
+        // Для завершенных записей используем дату завершения
+        if (
+          appointment.status === "исполнено" &&
+          appointment.completedAtUtc &&
+          appointment.completedAtUtc.trim() !== ""
+        ) {
+          try {
+            dateToCheck = dayjs
+              .utc(appointment.completedAtUtc)
+              .tz(timezone)
+              .startOf("day");
+          } catch (e) {
+            // Если не удалось распарсить, используем дату записи
+            if (appointment.date) {
+              dateToCheck = dayjs.tz(appointment.date, timezone).startOf("day");
+            }
+          }
+        } else if (appointment.date) {
+          // Для остальных используем дату записи
+          dateToCheck = dayjs.tz(appointment.date, timezone).startOf("day");
+        }
+
+        if (dateToCheck && dateToCheck.isBefore(cutoffDate)) {
+          appointmentsToArchive.push(row);
+          rowIndicesToDelete.push(idx + 2); // +2 из-за заголовка и индексации с 1
+        }
+      });
+
+      if (appointmentsToArchive.length === 0) {
+        console.log("[archiveOldAppointments] Нет записей для архивирования");
+        return { archived: 0, errors: [] };
+      }
+
+      console.log(
+        `[archiveOldAppointments] Найдено записей для архивирования: ${appointmentsToArchive.length}`,
+      );
+
+      // Переносим записи в архив (batch append)
+      if (appointmentsToArchive.length > 0) {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: config.google.sheetsId,
+          range: `${SHEET_NAMES.APPOINTMENTS_ARCHIVE}!A2:Q2`,
+          valueInputOption: "RAW",
+          insertDataOption: "INSERT_ROWS",
+          requestBody: {
+            values: appointmentsToArchive,
+          },
+        });
+      }
+
+      // Удаляем записи из активных (получаем sheetId и удаляем батчами)
+      const errors = [];
+      
+      // Получаем sheetId для листа "Записи"
+      const spreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId: config.google.sheetsId,
+      });
+      const appointmentsSheet = spreadsheet.data.sheets.find(
+        (s) => s.properties.title === SHEET_NAMES.APPOINTMENTS,
+      );
+      
+      if (!appointmentsSheet) {
+        throw new Error(`Лист "${SHEET_NAMES.APPOINTMENTS}" не найден`);
+      }
+      
+      const sheetId = appointmentsSheet.properties.sheetId;
+      
+      // Сортируем индексы по убыванию для правильного удаления
+      const sortedIndices = [...rowIndicesToDelete].sort((a, b) => b - a);
+      
+      // Удаляем строки батчами (по 50 за раз для надежности)
+      const batchSize = 50;
+      for (let i = 0; i < sortedIndices.length; i += batchSize) {
+        const batch = sortedIndices.slice(i, i + batchSize);
+        const deleteRequests = batch.map((rowNumber) => ({
+          deleteDimension: {
+            range: {
+              sheetId: sheetId,
+              dimension: "ROWS",
+              startIndex: rowNumber - 1, // Google Sheets использует 0-based индексы
+              endIndex: rowNumber,
+            },
+          },
+        }));
+        
+        try {
+          await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: config.google.sheetsId,
+            requestBody: {
+              requests: deleteRequests,
+            },
+          });
+        } catch (e) {
+          errors.push({
+            rows: batch,
+            error: e.message || e,
+          });
+          console.error(
+            `[archiveOldAppointments] Ошибка при удалении батча строк:`,
+            e.message || e,
+          );
+        }
+      }
+
+      // Инвалидируем кэш для всех затронутых дат
+      appointmentsToArchive.forEach((row) => {
+        const appointment = parseAppointmentRow(row);
+        if (appointment.date) {
+          invalidateDayCache(appointment.date);
+        }
+      });
+
+      console.log(
+        `[archiveOldAppointments] Архивирование завершено. Перенесено записей: ${appointmentsToArchive.length}, ошибок: ${errors.length}`,
+      );
+
+      return {
+        archived: appointmentsToArchive.length,
+        errors: errors,
+      };
+    } catch (e) {
+      console.error(
+        "[archiveOldAppointments] Критическая ошибка при архивировании:",
+        e.message || e,
+      );
+      throw e;
+    }
+  }
+
+  // Комментарий: миграция существующих данных в архив (однократная операция)
+  async function migrateExistingDataToArchive(monthsToKeep = ARCHIVE_MONTHS) {
+    console.log(
+      `[migrateExistingDataToArchive] Начало миграции существующих данных (период: ${monthsToKeep} месяцев)`,
+    );
+
+    try {
+      const result = await archiveOldAppointments(monthsToKeep);
+      console.log(
+        `[migrateExistingDataToArchive] Миграция завершена. Перенесено записей: ${result.archived}`,
+      );
+      return result;
+    } catch (e) {
+      console.error(
+        "[migrateExistingDataToArchive] Ошибка при миграции:",
+        e.message || e,
+      );
+      throw e;
+    }
+  }
+
   return {
     ensureSheetsStructure,
     getSettings,
@@ -1959,6 +2129,8 @@ async function createSheetsService(config) {
     getCompletedAppointments,
     getCancelledAppointmentsInPeriod,
     getNewClientsCountInPeriod,
+    archiveOldAppointments,
+    migrateExistingDataToArchive,
   };
 }
 
