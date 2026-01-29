@@ -7,6 +7,7 @@ const timezonePlugin = require("dayjs/plugin/timezone");
 const { createBookingService } = require("./booking");
 const { cleanupSessionsFile } = require("../bot");
 const { formatDate } = require("../utils/formatDate");
+const { safeSendMessage, isBlockedError } = require("../utils/safeMessaging");
 
 dayjs.extend(utc);
 dayjs.extend(timezonePlugin);
@@ -118,21 +119,18 @@ function setupReminders({
             barberPhone,
             barberAddress,
           ].join("\n");
-          try {
-            await bot.telegram.sendMessage(app.telegramId, msg, {
-              parse_mode: "Markdown",
-            });
+          const result = await safeSendMessage(bot, app.telegramId, msg, {
+            parse_mode: "Markdown",
+          });
+          
+          if (result) {
             sentCount++;
-
-            // Добавляем задержку между сообщениями для оптимизации
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          } catch (err) {
+          } else {
             errorCount++;
-            console.error(
-              `Ошибка отправки напоминания пользователю ${app.telegramId}:`,
-              err.message,
-            );
           }
+
+          // Добавляем задержку между сообщениями для оптимизации
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
 
         // Логируем результат
@@ -231,29 +229,19 @@ function setupReminders({
               barberAddress,
             ].join("\n");
 
-            try {
-              await bot.telegram.sendMessage(app.telegramId, msg, {
-                parse_mode: "Markdown",
-              });
+            const result = await safeSendMessage(bot, app.telegramId, msg, {
+              parse_mode: "Markdown",
+            });
+            
+            if (result) {
               twoHourRemindedIds.add(reminderKey);
               sentCount++;
-
-              // Добавляем небольшую задержку между сообщениями
-              await new Promise((resolve) => setTimeout(resolve, 100));
-            } catch (err) {
+            } else {
               errorCount++;
-              console.error(
-                `Ошибка отправки 2-часового напоминания пользователю ${app.telegramId}:`,
-                err.message,
-              );
-
-              // Если пользователь заблокировал бота, помечаем запись?
-              if (err.response && err.response.error_code === 403) {
-                console.warn(
-                  `Пользователь ${app.telegramId} заблокировал бота, запись ID: ${app.id}`,
-                );
-              }
             }
+
+            // Добавляем небольшую задержку между сообщениями
+            await new Promise((resolve) => setTimeout(resolve, 100));
           }
         }
 
@@ -373,11 +361,15 @@ function setupReminders({
                       }
                     }
 
-                    await bot.telegram.sendMessage(
+                    // Безопасная отправка с обработкой ошибок
+                    await safeSendMessage(
+                      bot,
                       String(app.telegramId),
                       message,
                     );
                   } catch (err) {
+                    // Дополнительная обработка, если safeSendMessage вернул ошибку
+                    // (хотя она должна обрабатываться внутри)
                     console.error(
                       `Ошибка отправки уведомления об окончании услуги клиенту ${app.telegramId}:`,
                       err.message,
@@ -463,31 +455,22 @@ function setupReminders({
           // Заменяем плейсхолдер {clientName} на реальное имя
           const msg = messageTemplate.replace(/{clientName}/g, clientName);
 
-          try {
-            await bot.telegram.sendMessage(client.telegramId, msg, {
-              parse_mode: "Markdown",
-            });
+          const result = await safeSendMessage(bot, client.telegramId, msg, {
+            parse_mode: "Markdown",
+          });
 
-            // Помечаем напоминание как отправленное
+          if (result) {
+            // Помечаем напоминание как отправленное только если сообщение успешно отправлено
             await sheetsService.mark21DayReminderSent(client.telegramId);
             sentCount++;
-
-            // Добавляем задержку между сообщениями для оптимизации
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          } catch (err) {
+          } else {
             errorCount++;
-            console.error(
-              `Ошибка отправки напоминания 21 день пользователю ${client.telegramId}:`,
-              err.message,
-            );
-
             // Если пользователь заблокировал бота, не помечаем напоминание как отправленное
-            if (err.response && err.response.error_code === 403) {
-              console.warn(
-                `Пользователь ${client.telegramId} заблокировал бота, напоминание не отправлено`,
-              );
-            }
+            // (это уже обработано в safeSendMessage)
           }
+
+          // Добавляем задержку между сообщениями для оптимизации
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
 
         // Логируем результат

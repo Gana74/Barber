@@ -1,5 +1,6 @@
 const fs = require("fs").promises;
 const path = require("path");
+const { safeSendMessage, safeSendPhoto } = require("../utils/safeMessaging");
 
 const BANS_FILE = path.resolve(process.cwd(), "banned.json");
 
@@ -134,22 +135,27 @@ async function broadcastToClients(bot, sheetsService, payload, options = 200) {
       }
     }
 
-    try {
-      if (payload && typeof payload === "object" && payload.kind === "photo") {
-        await bot.telegram.sendPhoto(tid, payload.fileId, {
-          caption: payload.caption || undefined,
-        });
-      } else {
-        const text =
-          typeof payload === "string"
-            ? payload
-            : (payload && payload.text) || "";
-        await bot.telegram.sendMessage(tid, text);
-      }
+    let sendResult = null;
+    
+    if (payload && typeof payload === "object" && payload.kind === "photo") {
+      sendResult = await safeSendPhoto(bot, tid, payload.fileId, {
+        caption: payload.caption || undefined,
+      });
+    } else {
+      const text =
+        typeof payload === "string"
+          ? payload
+          : (payload && payload.text) || "";
+      sendResult = await safeSendMessage(bot, tid, text);
+    }
+    
+    if (sendResult) {
       results.push({ id: tid, ok: true });
       sentIds.push(tid);
-    } catch (e) {
-      results.push({ id: tid, ok: false, error: e.message });
+    } else {
+      // Ошибка уже обработана в safeSendMessage/safeSendPhoto
+      // Логирование происходит внутри этих функций
+      results.push({ id: tid, ok: false, error: "Failed to send message" });
     }
     if (optsThrottle) await new Promise((r) => setTimeout(r, optsThrottle));
   }

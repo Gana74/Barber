@@ -22,6 +22,7 @@ const {
   logError,
   logAction,
 } = require("../utils/logger");
+const { safeSendMessage } = require("../utils/safeMessaging");
 const dayjs = require("dayjs");
 const timezonePlugin = require("dayjs/plugin/timezone");
 const utc = require("dayjs/plugin/utc");
@@ -377,7 +378,9 @@ function createBot({ config, sheetsService, calendarService }) {
     }
 
     if (config.managerChatId) {
-      await ctx.telegram.sendMessage(
+      // Безопасная отправка уведомления менеджеру с обработкой ошибок
+      await safeSendMessage(
+        ctx.telegram,
         config.managerChatId,
         `Клиент отменил запись:\nУслуга: ${
           appointment.service
@@ -1332,14 +1335,14 @@ function createBot({ config, sheetsService, calendarService }) {
           "success",
         );
         if (appointment.telegramId) {
-          try {
-            await ctx.telegram.sendMessage(
-              String(appointment.telegramId),
-              `Ваша запись на ${formatDate(appointment.date)} ${
-                appointment.timeStart
-              } отменена менеджером.`,
-            );
-          } catch (e) {}
+          // Безопасная отправка уведомления пользователю с обработкой ошибок
+          await safeSendMessage(
+            ctx.telegram,
+            String(appointment.telegramId),
+            `Ваша запись на ${formatDate(appointment.date)} ${
+              appointment.timeStart
+            } отменена менеджером.`,
+          );
         }
       }
       delete ctx.session.adminAction;

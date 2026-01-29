@@ -7,6 +7,68 @@ const { createSheetsService } = require("./src/services/googleSheets");
 const { createCalendarService } = require("./src/services/googleCalendar");
 const { setupReminders } = require("./src/services/reminders");
 
+// Глобальные обработчики ошибок для предотвращения краха процесса
+// Обработчик необработанных отклоненных промисов
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+  
+  // Если это ошибка Telegram API (например, пользователь заблокировал бота)
+  if (reason && reason.response) {
+    const errorCode = reason.response.error_code;
+    const errorDescription = reason.response.description || reason.message;
+    
+    // 403 Forbidden - пользователь заблокировал бота (не критично)
+    if (errorCode === 403) {
+      console.warn(
+        `[Global Error Handler] User blocked the bot. Error: ${errorDescription}`,
+      );
+      return; // Не завершаем процесс для этой ошибки
+    }
+    
+    // 429 Too Many Requests - превышен лимит (не критично)
+    if (errorCode === 429) {
+      console.warn(
+        `[Global Error Handler] Rate limit exceeded. Error: ${errorDescription}`,
+      );
+      return; // Не завершаем процесс для этой ошибки
+    }
+    
+    // 400 Bad Request - неверный запрос (не критично)
+    if (errorCode === 400) {
+      console.warn(
+        `[Global Error Handler] Bad request. Error: ${errorDescription}`,
+      );
+      return; // Не завершаем процесс для этой ошибки
+    }
+  }
+  
+  // Для других ошибок логируем, но не завершаем процесс
+  // чтобы бот продолжал работать
+  console.error("[Global Error Handler] Unhandled rejection logged, continuing...");
+});
+
+// Обработчик необработанных исключений
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception:", error);
+  
+  // Если это ошибка Telegram API, не завершаем процесс
+  if (error && error.response) {
+    const errorCode = error.response.error_code;
+    
+    // 403, 429, 400 - не критичные ошибки Telegram API
+    if (errorCode === 403 || errorCode === 429 || errorCode === 400) {
+      console.warn(
+        `[Global Error Handler] Telegram API error (${errorCode}), continuing...`,
+      );
+      return; // Не завершаем процесс
+    }
+  }
+  
+  // Для критических ошибок логируем и завершаем процесс
+  console.error("[Global Error Handler] Critical error, exiting...");
+  process.exit(1);
+});
+
 async function main() {
   // Комментарий: базовый лог старта приложения
   console.log("Bootstrapping barber bot...");

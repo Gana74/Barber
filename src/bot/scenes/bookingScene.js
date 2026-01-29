@@ -8,6 +8,7 @@ dayjs.extend(timezonePlugin);
 const { formatDate } = require("../../utils/formatDate");
 const { validateName, sanitizeText } = require("../../utils/security");
 const { logAction } = require("../../utils/logger");
+const { safeSendMessage } = require("../../utils/safeMessaging");
 
 function formatDateLabel(d) {
   return d.format("DD.MM (dd)");
@@ -884,7 +885,8 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           `Код отмены: ${appointment.cancelCode}`,
         ].join("\n");
 
-        await ctx.telegram.sendMessage(config.managerChatId, managerMsg);
+        // Безопасная отправка с обработкой ошибок
+        await safeSendMessage(ctx.telegram, config.managerChatId, managerMsg);
       }
 
       // Возвращаем пользователя в главное меню
