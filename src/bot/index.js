@@ -226,10 +226,9 @@ function createBot({ config, sheetsService, calendarService }) {
 
     const name = ctx.from.first_name || "друг";
     await ctx.reply(
-      `Привет, ${name}! Я бот мастера по услугам красоты. Здесь можно записаться на стрижку.`,
+      `Привет, ${name}! Я бот мастера по услугам красоты. Здесь можно записаться на стрижку.\n\n👇 Выберите действие с помощью кнопок ниже:`,
       Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
-        .resize()
-        .oneTime(),
+        .resize(),
     );
   });
 
@@ -434,10 +433,9 @@ function createBot({ config, sheetsService, calendarService }) {
     ctx.session = ctx.session || {};
     ctx.session.mode = "user";
     await ctx.reply(
-      "Режим пользователя. Выберите действие:",
+      "Режим пользователя.\n\n👇 Выберите действие с помощью кнопок ниже:",
       Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
-        .resize()
-        .oneTime(),
+        .resize(),
     );
   });
 
@@ -693,10 +691,9 @@ function createBot({ config, sheetsService, calendarService }) {
     ctx.session = ctx.session || {};
     ctx.session.mode = "user";
     await ctx.reply(
-      "Режим пользователя. Выберите действие:",
+      "Режим пользователя.\n\n👇 Выберите действие с помощью кнопок ниже:",
       Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
-        .resize()
-        .oneTime(),
+        .resize(),
     );
   });
 
@@ -1338,11 +1335,11 @@ function createBot({ config, sheetsService, calendarService }) {
           // Безопасная отправка уведомления пользователю с обработкой ошибок
           await safeSendMessage(
             ctx.telegram,
-            String(appointment.telegramId),
-            `Ваша запись на ${formatDate(appointment.date)} ${
-              appointment.timeStart
-            } отменена менеджером.`,
-          );
+              String(appointment.telegramId),
+              `Ваша запись на ${formatDate(appointment.date)} ${
+                appointment.timeStart
+              } отменена менеджером.`,
+            );
         }
       }
       delete ctx.session.adminAction;

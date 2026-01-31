@@ -921,12 +921,30 @@ async function createSheetsService(config) {
 
     const rowValues = rows[targetRowIndex];
     // Статус в колонке L (index 11), Исполнено_UTC в колонке O (index 14), Отменено_UTC в колонке P (index 15)
+    // Telegram_ID в колонке N (index 13)
     rowValues[11] = status;
     if (status === "отменена" && cancelledAtUtc) {
       rowValues[15] = cancelledAtUtc;
     }
     if (status === "исполнено" && completedAtUtc) {
       rowValues[14] = completedAtUtc; // Исполнено_UTC
+      
+      // Обновляем lastAppointmentAtUtc в таблице клиентов
+      const telegramId = rowValues[13]; // Telegram_ID
+      if (telegramId && String(telegramId).trim() !== "") {
+        try {
+          await upsertClient({
+            telegramId: String(telegramId),
+            lastAppointmentAtUtc: completedAtUtc,
+          });
+        } catch (e) {
+          // Логируем ошибку, но не блокируем обновление статуса записи
+          console.error(
+            `[updateAppointmentStatus] Ошибка при обновлении lastAppointmentAtUtc для клиента ${telegramId}:`,
+            e.message || e,
+          );
+        }
+      }
     }
 
     await sheets.spreadsheets.values.update({
@@ -1509,14 +1527,21 @@ async function createSheetsService(config) {
   }
 
   async function getClientsFor21DayReminder() {
-    // Комментарий: получаем клиентов, которым нужно отправить напоминание (используем активные и архив)
+    // Комментарий: оптимизированная версия - использует lastAppointmentAtUtc как основной источник
     console.log(
       `[getClientsFor21DayReminder] Начало проверки в ${dayjs().utc().toISOString()}`,
     );
     const clients = await getAllClients();
     
-    // Получаем все записи из обоих листов
-    const appointments = await getAllAppointmentsFromBothSheets();
+    // Получаем только активные записи для быстрой проверки
+    const activeAppointments = await getAllActiveAppointments();
+
+    // Создаем Set для быстрой проверки активных записей
+    const clientsWithActiveAppointments = new Set(
+      activeAppointments
+        .map((app) => String(app.telegramId))
+        .filter(Boolean),
+    );
 
     const now = dayjs().utc();
     const clientsForReminder = [];
@@ -1526,7 +1551,7 @@ async function createSheetsService(config) {
     );
 
     for (const client of clients) {
-      // Проверяем базовые условия
+      // Быстрые фильтры в начале
       if (!client.telegramId || client.banned) {
         continue;
       }
@@ -1539,44 +1564,17 @@ async function createSheetsService(config) {
         continue;
       }
 
-      // Получаем все записи клиента
-      const clientAppointments = appointments.filter(
-        (app) => String(app.telegramId) === String(client.telegramId),
-      );
-
-      // Проверяем, что нет активных записей
-      const hasActiveAppointments = clientAppointments.some(
-        (app) => app.status === "активна",
-      );
-      if (hasActiveAppointments) {
+      // Проверка активных записей (быстрая проверка через Set)
+      if (clientsWithActiveAppointments.has(String(client.telegramId))) {
         continue;
       }
 
-      // Находим последнюю завершенную запись
-      const completedAppointments = clientAppointments.filter(
-        (app) => app.status === "исполнено" && app.completedAtUtc,
-      );
-
-      let lastHaircutDate = null;
-
-      if (completedAppointments.length > 0) {
-        // Сортируем по дате завершения (по убыванию)
-        completedAppointments.sort((a, b) => {
-          const dateA = dayjs.utc(a.completedAtUtc);
-          const dateB = dayjs.utc(b.completedAtUtc);
-          return dateB.isAfter(dateA) ? 1 : -1;
-        });
-        lastHaircutDate = dayjs.utc(completedAppointments[0].completedAtUtc);
-      } else if (
-        client.lastAppointmentAtUtc &&
-        client.lastAppointmentAtUtc.trim() !== ""
-      ) {
-        // Fallback: используем Последняя_запись_UTC из таблицы клиентов
-        lastHaircutDate = dayjs.utc(client.lastAppointmentAtUtc);
-      } else {
-        // Нет данных о последней стрижке - пропускаем
+      // Используем lastAppointmentAtUtc как основной источник данных
+      if (!client.lastAppointmentAtUtc || client.lastAppointmentAtUtc.trim() === "") {
         continue;
       }
+
+      const lastHaircutDate = dayjs.utc(client.lastAppointmentAtUtc);
 
       // Вычисляем разницу в днях
       // Используем разницу в миллисекундах и делим на количество миллисекунд в дне

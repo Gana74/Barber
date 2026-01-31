@@ -137,17 +137,17 @@ async function broadcastToClients(bot, sheetsService, payload, options = 200) {
 
     let sendResult = null;
     
-    if (payload && typeof payload === "object" && payload.kind === "photo") {
+      if (payload && typeof payload === "object" && payload.kind === "photo") {
       sendResult = await safeSendPhoto(bot, tid, payload.fileId, {
-        caption: payload.caption || undefined,
-      });
-    } else {
-      const text =
-        typeof payload === "string"
-          ? payload
-          : (payload && payload.text) || "";
+          caption: payload.caption || undefined,
+        });
+      } else {
+        const text =
+          typeof payload === "string"
+            ? payload
+            : (payload && payload.text) || "";
       sendResult = await safeSendMessage(bot, tid, text);
-    }
+      }
     
     if (sendResult) {
       results.push({ id: tid, ok: true });

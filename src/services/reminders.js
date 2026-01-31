@@ -120,8 +120,8 @@ function setupReminders({
             barberAddress,
           ].join("\n");
           const result = await safeSendMessage(bot, app.telegramId, msg, {
-            parse_mode: "Markdown",
-          });
+              parse_mode: "Markdown",
+            });
           
           if (result) {
             sentCount++;
@@ -230,8 +230,8 @@ function setupReminders({
             ].join("\n");
 
             const result = await safeSendMessage(bot, app.telegramId, msg, {
-              parse_mode: "Markdown",
-            });
+                parse_mode: "Markdown",
+              });
             
             if (result) {
               twoHourRemindedIds.add(reminderKey);
@@ -456,8 +456,8 @@ function setupReminders({
           const msg = messageTemplate.replace(/{clientName}/g, clientName);
 
           const result = await safeSendMessage(bot, client.telegramId, msg, {
-            parse_mode: "Markdown",
-          });
+              parse_mode: "Markdown",
+            });
 
           if (result) {
             // Помечаем напоминание как отправленное только если сообщение успешно отправлено

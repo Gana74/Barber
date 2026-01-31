@@ -178,8 +178,24 @@ module.exports = {
     },
   ],
 };
+
+
 ```
 
+### Конфигурация для серверов без ограниченной памяти:
+<!-- module.exports = {
+  apps: [{
+    name: "barber-bot",
+    script: "index.js",
+    env: {
+      NODE_ENV: "production"
+    },
+    log_date_format: "YYYY-MM-DD HH:mm:ss",
+    error_file: "logs/error.log",
+    out_file: "logs/out.log",
+    time: true
+  }]
+} -->
 ---
 
 ## 8. Проверка работоспособности
