@@ -38,7 +38,6 @@ async function createCalendarService(config) {
           },
           reminders: {
             useDefault: false,
-            overrides: [],
           },
         },
       });
