@@ -58,9 +58,9 @@ function setupReminders({
   // Инициализируем очистку кэша напоминаний
   setupReminderCleanup();
 
-  // Напоминания за день записи (в 10:00 по времени салона)
+  // Напоминания за день записи (в 08:00 по времени салона)
   cron.schedule(
-    "0 10 * * *",
+    "0 08 * * *",
     async () => {
       // Блокировка одновременного выполнения
       if (cronLocks.dayReminder) {
@@ -264,33 +264,6 @@ function setupReminders({
     },
   );
 
-  // Напоминание за 1 день до записи для новых клиентов (опционально)
-  if (config.enableWelcomeReminder) {
-    cron.schedule(
-      "0 18 * * *",
-      async () => {
-        try {
-          const timezone = await sheetsService.getTimezone();
-          const nowTz = dayjs().tz(timezone);
-          const tomorrow = nowTz.add(1, "day").format("YYYY-MM-DD");
-
-          const appointments =
-            await sheetsService.getAppointmentsByDate(tomorrow);
-          const activeApps = appointments.filter(
-            (app) => app.status === booking.STATUSES.ACTIVE,
-          );
-
-          // Можно добавить логику для новых клиентов (первая запись)
-          // Это требует доработки базы клиентов
-        } catch (err) {
-          console.error("Ошибка в приветственных напоминаниях:", err);
-        }
-      },
-      {
-        timezone: config.defaultTimezone,
-      },
-    );
-  }
 
   // Автоматическое завершение записей: каждые 30 минут проверяем прошедшие записи
   // Статус меняется на "исполнено" сразу после окончания времени услуги
