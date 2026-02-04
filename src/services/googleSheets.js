@@ -11,13 +11,18 @@ dayjs.extend(utc);
 dayjs.extend(timezonePlugin);
 
 // Комментарий: имена листов в таблице
+// ВНИМАНИЕ: фактические названия листов в Google Sheets:
+// - "Расписание" — лист с рабочими часами (ранее WorkHours)
+// - "Блокировка времени" — лист с блокировками слотов (ранее Расписание)
 const SHEET_NAMES = {
   SETTINGS: "Настройки",
-  SCHEDULE: "Расписание",
+  // Лист с блокировками времени
+  SCHEDULE: "Блокировка времени",
   APPOINTMENTS: "Записи",
   APPOINTMENTS_ARCHIVE: "Записи_Архив",
   CLIENTS: "Клиенты",
-  WORKHOURS: "WorkHours",
+  // Лист с рабочими часами
+  WORKHOURS: "Расписание",
 };
 
 // Комментарий: константы для архивирования
@@ -719,7 +724,7 @@ async function createSheetsService(config) {
       }
     }
 
-    // Читаем Расписание
+    // Читаем блокировки времени (лист "Блокировка времени")
     const scheduleRes = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
       range: `${SHEET_NAMES.SCHEDULE}!A2:F1000`,

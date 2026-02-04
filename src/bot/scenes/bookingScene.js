@@ -236,7 +236,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
       ctx.wizard.state.booking.serviceKey = service.key;
 
-      // Важно: чтобы изменения в WorkHours вступали сразу — сбрасываем кэш перед чтением
+      // Важно: чтобы изменения в листе «Расписание» (рабочие часы) вступали сразу — сбрасываем кэш перед чтением
       if (sheetsService.invalidateWorkHoursCache) {
         try {
           sheetsService.invalidateWorkHoursCache();
