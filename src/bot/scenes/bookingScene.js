@@ -607,7 +607,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           booking.phone = phone.startsWith("+") ? phone : `+${phone}`;
           booking.step = "comment";
           await ctx.reply(
-            'Если хочешь, добавь комментарий к записи. Или напиши "-".',
+            'Для продолжения записи добавь комментарий. Или напиши "-".',
             Markup.removeKeyboard(),
           );
           return;

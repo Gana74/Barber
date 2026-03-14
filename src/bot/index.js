@@ -409,6 +409,7 @@ function createBot({ config, sheetsService, calendarService }) {
     ["Редактировать напоминание 21 день"],
     ["Редактировать ссылку на чаевые"],
     ["Изменить контакты"],
+    ["Настройки расписания"],
     ["Назад в админ-меню"],
   ]).resize();
 
@@ -686,6 +687,142 @@ function createBot({ config, sheetsService, calendarService }) {
     }
   });
 
+  bot.hears("Настройки расписания", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!(ctx.session && ctx.session.mode === "admin")) return;
+
+    ctx.session.scheduleAction = null;
+
+    const keyboard = Markup.keyboard([
+      ["Просмотр расписания на дату"],
+      ["Изменить/добавить расписание на дату"],
+      ["Удалить расписание на дату"],
+      ["Посмотреть всё расписание"],
+      ["Шаблоны по дням недели"],
+      ["Назад в админ-меню"],
+    ]).resize();
+
+    await ctx.reply(
+      "Настройки расписания. Выберите действие:",
+      keyboard,
+    );
+  });
+
+  bot.hears("Просмотр расписания на дату", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!(ctx.session && ctx.session.mode === "admin")) return;
+
+    ctx.session.scheduleAction = { type: "view", step: "date" };
+    await ctx.reply(
+      "Укажите дату в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД для просмотра расписания:",
+    );
+  });
+
+  bot.hears("Изменить/добавить расписание на дату", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!(ctx.session && ctx.session.mode === "admin")) return;
+
+    ctx.session.scheduleAction = { type: "edit", step: "date" };
+    await ctx.reply(
+      "Укажите дату в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД для изменения/добавления расписания:",
+    );
+  });
+
+  bot.hears("Удалить расписание на дату", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!(ctx.session && ctx.session.mode === "admin")) return;
+
+    ctx.session.scheduleAction = { type: "delete", step: "date" };
+    await ctx.reply(
+      "Укажите дату в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД для удаления расписания:",
+    );
+  });
+
+  bot.hears("Посмотреть всё расписание", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!(ctx.session && ctx.session.mode === "admin")) return;
+
+    try {
+      const rows = (await sheetsService.getWorkHoursRaw()) || [];
+      const nonEmpty = rows.filter(
+        (r) =>
+          (r.date || r.rawDate || "").trim() ||
+          (r.weekday || "").trim(),
+      );
+
+      if (!nonEmpty.length) {
+        await ctx.reply("Расписание пусто в окне из 50 строк.");
+        return;
+      }
+
+      const lines = nonEmpty.map((r, idx) => {
+        const label =
+          (r.date || r.rawDate || "").trim() ||
+          `шаблон: ${r.weekday}`;
+        const base = `#${idx + 1}. ${label}`;
+        const work = r.start && r.end ? ` ${r.start}–${r.end}` : "";
+        const lunch =
+          r.lunchStart && r.lunchEnd
+            ? `, обед ${r.lunchStart}–${r.lunchEnd}`
+            : "";
+        return base + work + lunch;
+      });
+
+      await ctx.reply(
+        "Текущее окно расписания (первые 50 строк листа \"Расписание\"):\n\n" +
+          lines.join("\n"),
+      );
+      await ctx.reply(
+        "Чтобы отредактировать конкретную дату, используйте пункт \"Изменить/добавить расписание на дату\" и укажите нужную дату.",
+      );
+    } catch (e) {
+      await ctx.reply(
+        `Ошибка при получении расписания: ${e.message || e}`,
+      );
+    }
+  });
+
+  bot.hears("Шаблоны по дням недели", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!(ctx.session && ctx.session.mode === "admin")) return;
+
+    try {
+      const rows = (await sheetsService.getWorkHoursRaw()) || [];
+      const templates = rows.filter(
+        (r) => !r.date && (r.weekday || "").trim(),
+      );
+
+      if (!templates.length) {
+        await ctx.reply(
+          "Шаблоны по дням недели ещё не заданы. Можно настроить их, ответив на вопросы ниже.",
+        );
+      } else {
+        const lines = templates.map((r) => {
+          const work =
+            r.start && r.end ? ` ${r.start}–${r.end}` : " (время не задано)";
+          const lunch =
+            r.lunchStart && r.lunchEnd
+              ? `, обед ${r.lunchStart}–${r.lunchEnd}`
+              : "";
+          return `${r.weekday}${work}${lunch}`;
+        });
+        await ctx.reply(
+          "Текущие шаблоны по дням недели:\n\n" +
+            lines.join("\n"),
+        );
+      }
+
+      ctx.session.scheduleAction = { type: "weekday_edit", step: "weekday" };
+      await ctx.reply(
+        "Укажите день недели (например, Пн, Вт, Ср или mon/tue/...)\nили напишите \"удалить Пн\" чтобы удалить шаблон для Пн:",
+      );
+    } catch (e) {
+      await ctx.reply(
+        `Ошибка при получении шаблонов: ${e.message || e}`,
+      );
+    }
+  });
+
   bot.hears("Вернуться в пользовательский режим", async (ctx) => {
     if (!isAdmin(ctx)) return;
     ctx.session = ctx.session || {};
@@ -869,6 +1006,7 @@ function createBot({ config, sheetsService, calendarService }) {
       } else {
         // Возврат из настроек в главное меню или из других мест
         delete ctx.session.servicesAction;
+        delete ctx.session.scheduleAction;
         delete ctx.session.fromSettings;
         await ctx.reply(
           "Включён режим администратора. Выберите действие:",
@@ -1092,6 +1230,381 @@ function createBot({ config, sheetsService, calendarService }) {
   bot.on("text", async (ctx, next) => {
     if (!isAdmin(ctx) || !(ctx.session && ctx.session.mode === "admin"))
       return next();
+
+    // Обработка настроек расписания
+    const scheduleAction = ctx.session && ctx.session.scheduleAction;
+    if (scheduleAction) {
+      const text = ctx.message.text && ctx.message.text.trim();
+
+      // Помощник для конвертации даты ДД.ММ.ГГГГ -> ГГГГ-ММ-ДД
+      const toIsoDate = (raw) => {
+        const value = (raw || "").trim();
+        if (!value) return null;
+        if (/^\d{2}\.\d{2}\.\d{4}$/.test(value)) {
+          const [dd, mm, yyyy] = value.split(".");
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        return value;
+      };
+
+      if (scheduleAction.step === "date") {
+        const input = (text || "").trim();
+        if (!input) {
+          await ctx.reply(
+            "Дата не может быть пустой. Укажите дату в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД:",
+          );
+          return;
+        }
+
+        ctx.session.scheduleAction.dateInput = input;
+        const isoDate = toIsoDate(input);
+
+        if (scheduleAction.type === "view") {
+          try {
+            const workHours = await sheetsService.getWorkHoursForDate(
+              isoDate,
+            );
+            if (!workHours || !workHours.start || !workHours.end) {
+              await ctx.reply("На эту дату расписание не задано (выходной).");
+            } else {
+              const infoLines = [
+                `Расписание на ${input}:`,
+                `Рабочее время: ${workHours.start}–${workHours.end}`,
+              ];
+              if (workHours.lunchStart && workHours.lunchEnd) {
+                infoLines.push(
+                  `Обед: ${workHours.lunchStart}–${workHours.lunchEnd}`,
+                );
+              }
+              await ctx.reply(infoLines.join("\n"));
+            }
+          } catch (e) {
+            await ctx.reply(
+              `Ошибка при получении расписания: ${e.message || e}`,
+            );
+          }
+          ctx.session.scheduleAction = null;
+          return;
+        }
+
+        if (scheduleAction.type === "edit") {
+          ctx.session.scheduleAction.step = "start";
+          await ctx.reply(
+            `Укажите время начала рабочего дня для ${input} в формате HH:MM (например, 10:00):`,
+          );
+          return;
+        }
+
+        if (scheduleAction.type === "delete") {
+          try {
+            await sheetsService.deleteWorkHoursForDate(isoDate);
+            await ctx.reply(
+              `Расписание на дату ${input} удалено (если было задано).`,
+            );
+          } catch (e) {
+            await ctx.reply(
+              `Ошибка при удалении расписания: ${e.message || e}`,
+            );
+          }
+          ctx.session.scheduleAction = null;
+          return;
+        }
+      } else if (scheduleAction.type === "edit") {
+        const dateInput = scheduleAction.dateInput;
+        if (!dateInput) {
+          ctx.session.scheduleAction = null;
+          await ctx.reply("Сессия настройки расписания истекла. Начните заново.");
+          return;
+        }
+
+        if (scheduleAction.step === "start") {
+          if (!/^\d{2}:\d{2}$/.test(text || "")) {
+            await ctx.reply(
+              "Некорректный формат времени. Укажите время в формате HH:MM (например, 10:00):",
+            );
+            return;
+          }
+          ctx.session.scheduleAction.start = text;
+          ctx.session.scheduleAction.step = "end";
+          await ctx.reply(
+            "Укажите время окончания рабочего дня в формате HH:MM (например, 20:00):",
+          );
+          return;
+        }
+
+        if (scheduleAction.step === "end") {
+          if (!/^\d{2}:\d{2}$/.test(text || "")) {
+            await ctx.reply(
+              "Некорректный формат времени. Укажите время в формате HH:MM (например, 20:00):",
+            );
+            return;
+          }
+          ctx.session.scheduleAction.end = text;
+          ctx.session.scheduleAction.step = "lunch_start";
+          await ctx.reply(
+            'Укажите время начала обеда в формате HH:MM или "-" если без обеда:',
+          );
+          return;
+        }
+
+        if (scheduleAction.step === "lunch_start") {
+          let lunchStart = "";
+          if (text && text.trim() !== "-") {
+            if (!/^\d{2}:\d{2}$/.test(text || "")) {
+              await ctx.reply(
+                'Некорректный формат времени. Укажите время в формате HH:MM или "-" если без обеда:',
+              );
+              return;
+            }
+            lunchStart = text;
+          }
+          ctx.session.scheduleAction.lunchStart = lunchStart;
+          ctx.session.scheduleAction.step = "lunch_end";
+          if (lunchStart) {
+            await ctx.reply(
+              "Укажите время окончания обеда в формате HH:MM (должно быть позже начала обеда):",
+            );
+          } else {
+            await ctx.reply(
+              "Обед будет отсутствовать. Подтвердите сохранение: напишите \"Да\" или \"Нет\".",
+            );
+            ctx.session.scheduleAction.step = "confirm";
+          }
+          return;
+        }
+
+        if (scheduleAction.step === "lunch_end") {
+          const lunchStart = scheduleAction.lunchStart;
+          let lunchEnd = "";
+          if (text && text.trim() !== "-") {
+            if (!/^\d{2}:\d{2}$/.test(text || "")) {
+              await ctx.reply(
+                "Некорректный формат времени. Укажите время окончания обеда в формате HH:MM:",
+              );
+              return;
+            }
+            lunchEnd = text;
+          }
+          ctx.session.scheduleAction.lunchEnd = lunchEnd;
+          ctx.session.scheduleAction.step = "confirm";
+
+          const summary = [
+            `Расписание на ${dateInput}:`,
+            `Рабочее время: ${scheduleAction.start}–${scheduleAction.end}`,
+            lunchStart && lunchEnd
+              ? `Обед: ${lunchStart}–${lunchEnd}`
+              : "Обед: нет",
+            "",
+            'Подтвердите сохранение: напишите "Да" или "Нет".',
+          ].join("\n");
+
+          await ctx.reply(summary);
+          return;
+        }
+
+        if (scheduleAction.step === "confirm") {
+          const answer = (text || "").trim().toLowerCase();
+          if (answer !== "да" && answer !== "нет") {
+            await ctx.reply('Ответьте "Да" для сохранения или "Нет" для отмены.');
+            return;
+          }
+          if (answer === "нет") {
+            ctx.session.scheduleAction = null;
+            await ctx.reply("Изменение расписания отменено.");
+            return;
+          }
+
+          try {
+            await sheetsService.setWorkHoursForDate(scheduleAction.dateInput, {
+              start: scheduleAction.start,
+              end: scheduleAction.end,
+              lunchStart: scheduleAction.lunchStart,
+              lunchEnd: scheduleAction.lunchEnd,
+            });
+            await ctx.reply(
+              `Расписание на дату ${scheduleAction.dateInput} сохранено.`,
+            );
+          } catch (e) {
+            await ctx.reply(
+              `Ошибка при сохранении расписания: ${e.message || e}`,
+            );
+          }
+
+          ctx.session.scheduleAction = null;
+          return;
+        }
+      }
+    }
+
+    // Обработка шаблонов по дням недели
+    const scheduleAction2 = ctx.session && ctx.session.scheduleAction;
+    if (scheduleAction2 && scheduleAction2.type === "weekday_edit") {
+      const text = ctx.message.text && ctx.message.text.trim();
+
+      if (scheduleAction2.step === "weekday") {
+        if (!text) {
+          await ctx.reply(
+            "Укажите день недели (например, Пн, Вт, Ср или mon/tue/...) или \"удалить Пн\":",
+          );
+          return;
+        }
+
+        const lower = text.toLowerCase();
+        if (lower.startsWith("удалить")) {
+          const parts = text.split(/\s+/);
+          const dayToken = parts[1];
+          if (!dayToken) {
+            await ctx.reply(
+              "Укажите день для удаления, например: \"удалить Пн\".",
+            );
+            return;
+          }
+          try {
+            await sheetsService.deleteWeekdayTemplate(dayToken);
+            await ctx.reply(
+              `Шаблон для дня \"${dayToken}\" удалён (если существовал).`,
+            );
+          } catch (e) {
+            await ctx.reply(
+              `Ошибка при удалении шаблона: ${e.message || e}`,
+            );
+          }
+          ctx.session.scheduleAction = null;
+          return;
+        }
+
+        ctx.session.scheduleAction.weekdayKey = text;
+        ctx.session.scheduleAction.step = "weekday_start";
+        await ctx.reply(
+          `Укажите время начала рабочего дня для шаблона \"${text}\" в формате HH:MM:`,
+        );
+        return;
+      }
+
+      if (scheduleAction2.step === "weekday_start") {
+        if (!/^\d{2}:\d{2}$/.test(text || "")) {
+          await ctx.reply(
+            "Некорректный формат времени. Укажите время в формате HH:MM:",
+          );
+          return;
+        }
+        ctx.session.scheduleAction.start = text;
+        ctx.session.scheduleAction.step = "weekday_end";
+        await ctx.reply(
+          "Укажите время окончания рабочего дня в формате HH:MM:",
+        );
+        return;
+      }
+
+      if (scheduleAction2.step === "weekday_end") {
+        if (!/^\d{2}:\d{2}$/.test(text || "")) {
+          await ctx.reply(
+            "Некорректный формат времени. Укажите время в формате HH:MM:",
+          );
+          return;
+        }
+        ctx.session.scheduleAction.end = text;
+        ctx.session.scheduleAction.step = "weekday_lunch_start";
+        await ctx.reply(
+          'Укажите время начала обеда в формате HH:MM или "-" если без обеда:',
+        );
+        return;
+      }
+
+      if (scheduleAction2.step === "weekday_lunch_start") {
+        let lunchStart = "";
+        if (text && text.trim() !== "-") {
+          if (!/^\d{2}:\d{2}$/.test(text || "")) {
+            await ctx.reply(
+              'Некорректный формат времени. Укажите время в формате HH:MM или "-" если без обеда:',
+            );
+            return;
+          }
+          lunchStart = text;
+        }
+        ctx.session.scheduleAction.lunchStart = lunchStart;
+
+        if (!lunchStart) {
+          ctx.session.scheduleAction.lunchEnd = "";
+          ctx.session.scheduleAction.step = "weekday_confirm";
+          const d = scheduleAction2.weekdayKey;
+          const summary = [
+            `Шаблон для дня \"${d}\":`,
+            `Рабочее время: ${scheduleAction2.start}–${scheduleAction2.end}`,
+            "Обед: нет",
+            '',
+            'Подтвердите сохранение шаблона: напишите "Да" или "Нет".',
+          ].join("\n");
+          await ctx.reply(summary);
+          return;
+        }
+
+        ctx.session.scheduleAction.step = "weekday_lunch_end";
+        await ctx.reply(
+          "Укажите время окончания обеда в формате HH:MM (должно быть позже начала обеда):",
+        );
+        return;
+      }
+
+      if (scheduleAction2.step === "weekday_lunch_end") {
+        if (!/^\d{2}:\d{2}$/.test(text || "")) {
+          await ctx.reply(
+            "Некорректный формат времени. Укажите время окончания обеда в формате HH:MM:",
+          );
+          return;
+        }
+        ctx.session.scheduleAction.lunchEnd = text;
+        ctx.session.scheduleAction.step = "weekday_confirm";
+
+        const d = scheduleAction2.weekdayKey;
+        const summary = [
+          `Шаблон для дня \"${d}\":`,
+          `Рабочее время: ${scheduleAction2.start}–${scheduleAction2.end}`,
+          `Обед: ${scheduleAction2.lunchStart}–${scheduleAction2.lunchEnd}`,
+          '',
+          'Подтвердите сохранение шаблона: напишите "Да" или "Нет".',
+        ].join("\n");
+        await ctx.reply(summary);
+        return;
+      }
+
+      if (scheduleAction2.step === "weekday_confirm") {
+        const answer = (text || "").trim().toLowerCase();
+        if (answer !== "да" && answer !== "нет") {
+          await ctx.reply(
+            'Ответьте "Да" для сохранения или "Нет" для отмены.',
+          );
+          return;
+        }
+        if (answer === "нет") {
+          ctx.session.scheduleAction = null;
+          await ctx.reply("Изменение шаблона отменено.");
+          return;
+        }
+
+        try {
+          await sheetsService.setWeekdayTemplate(
+            scheduleAction2.weekdayKey,
+            {
+              start: scheduleAction2.start,
+              end: scheduleAction2.end,
+              lunchStart: scheduleAction2.lunchStart,
+              lunchEnd: scheduleAction2.lunchEnd,
+            },
+          );
+          await ctx.reply(
+            `Шаблон для дня \"${scheduleAction2.weekdayKey}\" сохранён.`,
+          );
+        } catch (e) {
+          await ctx.reply(
+            `Ошибка при сохранении шаблона: ${e.message || e}`,
+          );
+        }
+
+        ctx.session.scheduleAction = null;
+        return;
+      }
+    }
 
     // Обработка управления услугами
     const servicesAction = ctx.session && ctx.session.servicesAction;

@@ -175,7 +175,10 @@ async function createSheetsService(config) {
       const activeRows = activeRes.data.values || [];
       appointments.push(...activeRows.map(parseAppointmentRow));
     } catch (e) {
-      console.warn("[getAllAppointmentsFromBothSheets] Ошибка при чтении активных записей:", e.message || e);
+      console.warn(
+        "[getAllAppointmentsFromBothSheets] Ошибка при чтении активных записей:",
+        e.message || e,
+      );
     }
 
     // Читаем архивные записи
@@ -188,16 +191,433 @@ async function createSheetsService(config) {
       appointments.push(...archiveRows.map(parseAppointmentRow));
     } catch (e) {
       // Если архив еще не создан или пуст, игнорируем ошибку
-      console.warn("[getAllAppointmentsFromBothSheets] Ошибка при чтении архива:", e.message || e);
+      console.warn(
+        "[getAllAppointmentsFromBothSheets] Ошибка при чтении архива:",
+        e.message || e,
+      );
     }
 
     return appointments;
   }
 
+  const WORKHOURS_WINDOW_ROWS = 60;
+
+  function normalizeDateStr(dateStr) {
+    if (!dateStr) return null;
+    try {
+      const trimmed = String(dateStr).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        return trimmed;
+      }
+      if (/^\d{2}\.\d{2}\.\d{4}$/.test(trimmed)) {
+        const [dd, mm, yyyy] = trimmed.split(".");
+        return `${yyyy}-${mm}-${dd}`;
+      }
+      const d = dayjs(trimmed);
+      if (d.isValid()) {
+        return d.format("YYYY-MM-DD");
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
+  }
+
+  async function getWorkHoursRaw() {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.WORKHOURS}!A2:F${WORKHOURS_WINDOW_ROWS + 1}`,
+    });
+
+    const rows = res.data.values || [];
+
+    const result = [];
+
+    rows.forEach((row, idx) => {
+      const [
+        dateCell,
+        weekdayCell,
+        timeStartCell,
+        timeEndCell,
+        lunchStartCell,
+        lunchEndCell,
+      ] = row || [];
+      result.push({
+        rowIndex: idx + 2,
+        rawDate: dateCell || "",
+        date: normalizeDateStr(dateCell || ""),
+        weekday: (weekdayCell || "").trim(),
+        start: (timeStartCell || "").trim(),
+        end: (timeEndCell || "").trim(),
+        lunchStart: (lunchStartCell || "").trim(),
+        lunchEnd: (lunchEndCell || "").trim(),
+      });
+    });
+
+    return result;
+  }
+
+  async function maintainWorkhoursWindow(
+    todayStr,
+    maxRows = WORKHOURS_WINDOW_ROWS,
+  ) {
+    // Берём все строки как есть
+    const allRows = await getWorkHoursRaw();
+
+    // Оставляем только реально заполненные (есть дата или день недели)
+    const filledRows = allRows.filter(
+      (r) => (r.date || r.rawDate || "").trim() || (r.weekday || "").trim(),
+    );
+
+    // Ограничиваем количеством строк (например, 50)
+    const finalRows = filledRows.slice(0, maxRows);
+
+    const values = [];
+
+    finalRows.forEach((r) => {
+      values.push([
+        r.date || r.rawDate || "",
+        r.weekday || "",
+        r.start || "",
+        r.end || "",
+        r.lunchStart || "",
+        r.lunchEnd || "",
+      ]);
+    });
+
+    // Дополняем пустыми строками до maxRows, чтобы диапазон оставался фиксированным
+    const remaining = maxRows - values.length;
+    for (let i = 0; i < remaining; i += 1) {
+      values.push(["", "", "", "", "", ""]);
+    }
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.WORKHOURS}!A2:F${maxRows + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values },
+    });
+
+    invalidateWorkHoursCache();
+  }
+
+  async function setWorkHoursForDate(
+    dateStr,
+    { start, end, lunchStart, lunchEnd },
+  ) {
+    const targetDate = normalizeDateStr(dateStr);
+    if (!targetDate) {
+      throw new Error("Некорректный формат даты");
+    }
+
+    const rows = await getWorkHoursRaw();
+    const dateRows = [];
+    const weekdayRows = [];
+
+    rows.forEach((row) => {
+      if (row.date) {
+        dateRows.push(row);
+      } else if (row.weekday) {
+        weekdayRows.push(row);
+      }
+    });
+
+    const existing = dateRows.find((r) => r.date === targetDate);
+    if (existing) {
+      existing.start = (start || "").trim();
+      existing.end = (end || "").trim();
+      existing.lunchStart = (lunchStart || "").trim();
+      existing.lunchEnd = (lunchEnd || "").trim();
+    } else {
+      dateRows.push({
+        rowIndex: null,
+        rawDate: targetDate,
+        date: targetDate,
+        weekday: "",
+        start: (start || "").trim(),
+        end: (end || "").trim(),
+        lunchStart: (lunchStart || "").trim(),
+        lunchEnd: (lunchEnd || "").trim(),
+      });
+    }
+
+    // Фильтруем даты: оставляем только будущие и сегодняшнюю
+    const todayNorm = dayjs().format("YYYY-MM-DD");
+    const todayDayjs = dayjs(todayNorm);
+    const futureDateRows = dateRows.filter((r) => {
+      const d = dayjs(r.date);
+      return (
+        d.isValid() &&
+        (d.isSame(todayDayjs, "day") || d.isAfter(todayDayjs, "day"))
+      );
+    });
+
+    const maxRows = WORKHOURS_WINDOW_ROWS;
+    const maxDateRows = Math.max(0, maxRows - weekdayRows.length);
+    const limitedDateRows =
+      futureDateRows.length > maxDateRows
+        ? futureDateRows.slice(0, maxDateRows)
+        : futureDateRows;
+
+    const finalRows = [...limitedDateRows, ...weekdayRows].slice(0, maxRows);
+    const values = [];
+    finalRows.forEach((r) => {
+      values.push([
+        r.date || r.rawDate || "",
+        r.weekday || "",
+        r.start || "",
+        r.end || "",
+        r.lunchStart || "",
+        r.lunchEnd || "",
+      ]);
+    });
+
+    const remaining = maxRows - values.length;
+    for (let i = 0; i < remaining; i += 1) {
+      values.push(["", "", "", "", "", ""]);
+    }
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.WORKHOURS}!A2:F${maxRows + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values },
+    });
+
+    invalidateWorkHoursCache();
+  }
+
+  async function deleteWorkHoursForDate(dateStr) {
+    const targetDate = normalizeDateStr(dateStr);
+    if (!targetDate) {
+      throw new Error("Некорректный формат даты");
+    }
+
+    const rows = await getWorkHoursRaw();
+    const dateRows = [];
+    const weekdayRows = [];
+
+    rows.forEach((row) => {
+      if (row.date && row.date !== targetDate) {
+        dateRows.push(row);
+      } else if (!row.date && row.weekday) {
+        weekdayRows.push(row);
+      }
+    });
+
+    const todayNorm = dayjs().format("YYYY-MM-DD");
+    const todayDayjs = dayjs(todayNorm);
+    const futureDateRows = dateRows.filter((r) => {
+      const d = dayjs(r.date);
+      return (
+        d.isValid() &&
+        (d.isSame(todayDayjs, "day") || d.isAfter(todayDayjs, "day"))
+      );
+    });
+
+    const maxRows = WORKHOURS_WINDOW_ROWS;
+    const maxDateRows = Math.max(0, maxRows - weekdayRows.length);
+    const limitedDateRows =
+      futureDateRows.length > maxDateRows
+        ? futureDateRows.slice(0, maxDateRows)
+        : futureDateRows;
+
+    const finalRows = [...limitedDateRows, ...weekdayRows].slice(0, maxRows);
+    const values = [];
+    finalRows.forEach((r) => {
+      values.push([
+        r.date || r.rawDate || "",
+        r.weekday || "",
+        r.start || "",
+        r.end || "",
+        r.lunchStart || "",
+        r.lunchEnd || "",
+      ]);
+    });
+    const remaining = maxRows - values.length;
+    for (let i = 0; i < remaining; i += 1) {
+      values.push(["", "", "", "", "", ""]);
+    }
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.WORKHOURS}!A2:F${maxRows + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values },
+    });
+
+    invalidateWorkHoursCache();
+  }
+
+  async function setWeekdayTemplate(
+    weekdayKey,
+    { start, end, lunchStart, lunchEnd },
+  ) {
+    const key = String(weekdayKey || "").trim();
+    if (!key) {
+      throw new Error("День недели не может быть пустым");
+    }
+
+    const rows = await getWorkHoursRaw();
+    const dateRows = [];
+    const weekdayRows = [];
+
+    rows.forEach((row) => {
+      if (row.date) {
+        dateRows.push(row);
+      } else if (row.weekday) {
+        weekdayRows.push(row);
+      }
+    });
+
+    const existing = weekdayRows.find(
+      (r) => r.weekday.toLowerCase() === key.toLowerCase(),
+    );
+    if (existing) {
+      existing.start = (start || "").trim();
+      existing.end = (end || "").trim();
+      existing.lunchStart = (lunchStart || "").trim();
+      existing.lunchEnd = (lunchEnd || "").trim();
+    } else {
+      weekdayRows.push({
+        rowIndex: null,
+        rawDate: "",
+        date: "",
+        weekday: key,
+        start: (start || "").trim(),
+        end: (end || "").trim(),
+        lunchStart: (lunchStart || "").trim(),
+        lunchEnd: (lunchEnd || "").trim(),
+      });
+    }
+
+    // Фильтруем даты: оставляем только будущие и сегодняшнюю
+    const todayNorm = dayjs().format("YYYY-MM-DD");
+    const todayDayjs = dayjs(todayNorm);
+    const futureDateRows = dateRows.filter((r) => {
+      const d = dayjs(r.date);
+      return (
+        d.isValid() &&
+        (d.isSame(todayDayjs, "day") || d.isAfter(todayDayjs, "day"))
+      );
+    });
+
+    const maxRows = WORKHOURS_WINDOW_ROWS;
+    const maxDateRows = Math.max(0, maxRows - weekdayRows.length);
+    const limitedDateRows =
+      futureDateRows.length > maxDateRows
+        ? futureDateRows.slice(0, maxDateRows)
+        : futureDateRows;
+
+    const maxWeekdayRows = maxRows - limitedDateRows.length;
+    const limitedWeekdayRows = weekdayRows.slice(0, maxWeekdayRows);
+
+    const finalRows = [...limitedDateRows, ...limitedWeekdayRows].slice(
+      0,
+      maxRows,
+    );
+    const values = [];
+    finalRows.forEach((r) => {
+      values.push([
+        r.date || r.rawDate || "",
+        r.weekday || "",
+        r.start || "",
+        r.end || "",
+        r.lunchStart || "",
+        r.lunchEnd || "",
+      ]);
+    });
+
+    const remaining = maxRows - values.length;
+    for (let i = 0; i < remaining; i += 1) {
+      values.push(["", "", "", "", "", ""]);
+    }
+
+    try {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.WORKHOURS}!A2:F${maxRows + 1}`,
+        valueInputOption: "RAW",
+        requestBody: { values },
+      });
+    } catch (updateError) {
+      throw updateError;
+    }
+
+    invalidateWorkHoursCache();
+  }
+
+  async function deleteWeekdayTemplate(weekdayKey) {
+    const key = String(weekdayKey || "").trim();
+    if (!key) {
+      throw new Error("День недели не может быть пустым");
+    }
+
+    const rows = await getWorkHoursRaw();
+    const dateRows = [];
+    const weekdayRows = [];
+
+    rows.forEach((row) => {
+      if (row.date) {
+        dateRows.push(row);
+      } else if (
+        row.weekday &&
+        row.weekday.toLowerCase() !== key.toLowerCase()
+      ) {
+        weekdayRows.push(row);
+      }
+    });
+
+    // Фильтруем даты: оставляем только будущие и сегодняшнюю
+    const todayNorm = dayjs().format("YYYY-MM-DD");
+    const todayDayjs = dayjs(todayNorm);
+    const futureDateRows = dateRows.filter((r) => {
+      const d = dayjs(r.date);
+      return (
+        d.isValid() &&
+        (d.isSame(todayDayjs, "day") || d.isAfter(todayDayjs, "day"))
+      );
+    });
+
+    const maxRows = WORKHOURS_WINDOW_ROWS;
+    const maxDateRows = Math.max(0, maxRows - weekdayRows.length);
+    const limitedDateRows =
+      futureDateRows.length > maxDateRows
+        ? futureDateRows.slice(0, maxDateRows)
+        : futureDateRows;
+
+    const finalRows = [...limitedDateRows, ...weekdayRows].slice(0, maxRows);
+    const values = [];
+    finalRows.forEach((r) => {
+      values.push([
+        r.date || r.rawDate || "",
+        r.weekday || "",
+        r.start || "",
+        r.end || "",
+        r.lunchStart || "",
+        r.lunchEnd || "",
+      ]);
+    });
+
+    const remaining = maxRows - values.length;
+    for (let i = 0; i < remaining; i += 1) {
+      values.push(["", "", "", "", "", ""]);
+    }
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.WORKHOURS}!A2:F${maxRows + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values },
+    });
+
+    invalidateWorkHoursCache();
+  }
+
   async function fetchWorkHours() {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
-      range: `${SHEET_NAMES.WORKHOURS}!A2:F1000`,
+      range: `${SHEET_NAMES.WORKHOURS}!A2:F${WORKHOURS_WINDOW_ROWS + 1}`,
     });
 
     const rows = res.data.values || [];
@@ -205,7 +625,6 @@ async function createSheetsService(config) {
     const byDate = {};
     const byWeekday = {};
 
-    // aliases mapping common english and russian names to canonical keys
     const WEEKDAY_ALIAS = {
       mon: "mon",
       monday: "mon",
@@ -251,14 +670,17 @@ async function createSheetsService(config) {
         timeEndCell,
         lunchStartCell,
         lunchEndCell,
-      ] = row;
+      ] = row || [];
       const start = (timeStartCell || "").trim();
       const end = (timeEndCell || "").trim();
       const lunchStart = (lunchStartCell || "").trim();
       const lunchEnd = (lunchEndCell || "").trim();
 
       if (dateCell) {
-        byDate[String(dateCell).trim()] = { start, end, lunchStart, lunchEnd };
+        const normalized = normalizeDateStr(dateCell);
+        if (normalized) {
+          byDate[normalized] = { start, end, lunchStart, lunchEnd };
+        }
       } else if (weekdayCell) {
         const raw = String(weekdayCell).trim().toLowerCase();
         let key = null;
@@ -271,7 +693,6 @@ async function createSheetsService(config) {
     workHoursCache = {
       byDate,
       byWeekday,
-      // TTL 30 минут для рабочих часов
       expiresAt: Date.now() + 30 * 60 * 1000,
     };
 
@@ -680,7 +1101,7 @@ async function createSheetsService(config) {
         range: `${SHEET_NAMES.APPOINTMENTS_ARCHIVE}!A2:Q10`,
       });
       const archiveRows = archiveCheck.data.values || [];
-      
+
       // Если в архиве меньше 5 записей, считаем что миграция еще не выполнялась
       if (archiveRows.length < 5) {
         console.log(
@@ -903,7 +1324,7 @@ async function createSheetsService(config) {
           range: `${SHEET_NAMES.APPOINTMENTS_ARCHIVE}!A2:Q10000`,
         });
         const archiveRows = archiveRes.data.values || [];
-        
+
         archiveRows.forEach((row, idx) => {
           if (row[0] === id) {
             targetRowIndex = idx;
@@ -914,7 +1335,10 @@ async function createSheetsService(config) {
         });
       } catch (e) {
         // Если архив еще не создан или пуст, игнорируем ошибку
-        console.warn("[updateAppointmentStatus] Ошибка при чтении архива:", e.message || e);
+        console.warn(
+          "[updateAppointmentStatus] Ошибка при чтении архива:",
+          e.message || e,
+        );
       }
     }
 
@@ -933,7 +1357,7 @@ async function createSheetsService(config) {
     }
     if (status === "исполнено" && completedAtUtc) {
       rowValues[14] = completedAtUtc; // Исполнено_UTC
-      
+
       // Обновляем lastAppointmentAtUtc в таблице клиентов
       const telegramId = rowValues[13]; // Telegram_ID
       if (telegramId && String(telegramId).trim() !== "") {
@@ -1211,7 +1635,7 @@ async function createSheetsService(config) {
     });
     const activeRows = activeRes.data.values || [];
     const activeRow = activeRows.find((r) => r[0] === id);
-    
+
     if (activeRow) {
       return parseAppointmentRow(activeRow);
     }
@@ -1224,13 +1648,16 @@ async function createSheetsService(config) {
       });
       const archiveRows = archiveRes.data.values || [];
       const archiveRow = archiveRows.find((r) => r[0] === id);
-      
+
       if (archiveRow) {
         return parseAppointmentRow(archiveRow);
       }
     } catch (e) {
       // Если архив еще не создан или пуст, игнорируем ошибку
-      console.warn("[getAppointmentById] Ошибка при чтении архива:", e.message || e);
+      console.warn(
+        "[getAppointmentById] Ошибка при чтении архива:",
+        e.message || e,
+      );
     }
 
     return null;
@@ -1244,14 +1671,14 @@ async function createSheetsService(config) {
       range: `${SHEET_NAMES.APPOINTMENTS}!${ACTIVE_RANGE}`,
     });
     const activeRows = activeRes.data.values || [];
-    
+
     // Код отмены находится в колонке с индексом 12 (после добавления колонки Цена)
     const activeRow = activeRows.find(
       (r) =>
         r[12] &&
         String(r[12]).toUpperCase() === String(cancelCode).toUpperCase(),
     );
-    
+
     if (activeRow) {
       return parseAppointmentRow(activeRow);
     }
@@ -1268,13 +1695,16 @@ async function createSheetsService(config) {
           r[12] &&
           String(r[12]).toUpperCase() === String(cancelCode).toUpperCase(),
       );
-      
+
       if (archiveRow) {
         return parseAppointmentRow(archiveRow);
       }
     } catch (e) {
       // Если архив еще не создан или пуст, игнорируем ошибку
-      console.warn("[getAppointmentByCancelCode] Ошибка при чтении архива:", e.message || e);
+      console.warn(
+        "[getAppointmentByCancelCode] Ошибка при чтении архива:",
+        e.message || e,
+      );
     }
 
     return null;
@@ -1528,7 +1958,9 @@ async function createSheetsService(config) {
   async function getAllAppointmentsForClient(telegramId) {
     // Комментарий: получаем все записи клиента (включая завершенные и отмененные) из активных и архива
     const appointments = await getAllAppointmentsFromBothSheets();
-    return appointments.filter((row) => String(row.telegramId) === String(telegramId));
+    return appointments.filter(
+      (row) => String(row.telegramId) === String(telegramId),
+    );
   }
 
   async function getClientsFor21DayReminder() {
@@ -1537,15 +1969,13 @@ async function createSheetsService(config) {
       `[getClientsFor21DayReminder] Начало проверки в ${dayjs().utc().toISOString()}`,
     );
     const clients = await getAllClients();
-    
+
     // Получаем только активные записи для быстрой проверки
     const activeAppointments = await getAllActiveAppointments();
 
     // Создаем Set для быстрой проверки активных записей
     const clientsWithActiveAppointments = new Set(
-      activeAppointments
-        .map((app) => String(app.telegramId))
-        .filter(Boolean),
+      activeAppointments.map((app) => String(app.telegramId)).filter(Boolean),
     );
 
     const now = dayjs().utc();
@@ -1575,7 +2005,10 @@ async function createSheetsService(config) {
       }
 
       // Используем lastAppointmentAtUtc как основной источник данных
-      if (!client.lastAppointmentAtUtc || client.lastAppointmentAtUtc.trim() === "") {
+      if (
+        !client.lastAppointmentAtUtc ||
+        client.lastAppointmentAtUtc.trim() === ""
+      ) {
         continue;
       }
 
@@ -1686,7 +2119,7 @@ async function createSheetsService(config) {
 
     // Получаем все записи из обоих листов
     let appointments = await getAllAppointmentsFromBothSheets();
-    
+
     // Фильтруем только завершенные
     appointments = appointments.filter((row) => row.status === "исполнено");
 
@@ -1750,9 +2183,11 @@ async function createSheetsService(config) {
 
     // Получаем все записи из обоих листов
     let appointments = await getAllAppointmentsFromBothSheets();
-    
+
     // Фильтруем только отмененные с датой отмены
-    appointments = appointments.filter((row) => row.status === "отменена" && row.cancelledAtUtc);
+    appointments = appointments.filter(
+      (row) => row.status === "отменена" && row.cancelledAtUtc,
+    );
 
     // Фильтруем по дате отмены (Отменено_UTC), приведённой к таймзоне салона
     if (startDate || endDate) {
@@ -1997,7 +2432,7 @@ async function createSheetsService(config) {
 
       // Удаляем записи из активных (получаем sheetId и удаляем батчами)
       const errors = [];
-      
+
       // Получаем sheetId для листа "Записи"
       const spreadsheet = await sheets.spreadsheets.get({
         spreadsheetId: config.google.sheetsId,
@@ -2005,16 +2440,16 @@ async function createSheetsService(config) {
       const appointmentsSheet = spreadsheet.data.sheets.find(
         (s) => s.properties.title === SHEET_NAMES.APPOINTMENTS,
       );
-      
+
       if (!appointmentsSheet) {
         throw new Error(`Лист "${SHEET_NAMES.APPOINTMENTS}" не найден`);
       }
-      
+
       const sheetId = appointmentsSheet.properties.sheetId;
-      
+
       // Сортируем индексы по убыванию для правильного удаления
       const sortedIndices = [...rowIndicesToDelete].sort((a, b) => b - a);
-      
+
       // Удаляем строки батчами (по 50 за раз для надежности)
       const batchSize = 50;
       for (let i = 0; i < sortedIndices.length; i += batchSize) {
@@ -2029,7 +2464,7 @@ async function createSheetsService(config) {
             },
           },
         }));
-        
+
         try {
           await sheets.spreadsheets.batchUpdate({
             spreadsheetId: config.google.sheetsId,
@@ -2120,7 +2555,12 @@ async function createSheetsService(config) {
     getClientsForBroadcast,
     markBroadcastSent,
     clearBroadcastMarks,
+    getWorkHoursRaw,
     getWorkHoursForDate,
+    setWorkHoursForDate,
+    deleteWorkHoursForDate,
+    setWeekdayTemplate,
+    deleteWeekdayTemplate,
     invalidateWorkHoursCache,
     getClientByTelegramId,
     getUserBanStatus,
