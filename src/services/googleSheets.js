@@ -98,6 +98,15 @@ const HEADERS = {
     "Обед_начало",
     "Обед_окончание",
   ],
+  [SHEET_NAMES.TWO_HOUR_CONFIRMATIONS]: [
+    "ID_записи",
+    "Telegram_ID",
+    "Напоминание_отправлено_UTC",
+    "Дедлайн_UTC",
+    "Статус",
+    "Подтверждено_UTC",
+    "Отменено_UTC",
+  ],
 };
 
 // Комментарий: простой in-memory кэш по датам
@@ -905,6 +914,168 @@ async function createSheetsService(config) {
     return true;
   }
 
+  // --- Портфолио (file_id массив) ---
+  async function getPortfolioFileIds() {
+    const settings = await getSettings();
+    const raw = settings.портфолио_фото;
+    if (!raw || typeof raw !== "string") return [];
+
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((x) => String(x)).filter(Boolean);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function setPortfolioFileIds(fileIds) {
+    const ids = Array.isArray(fileIds)
+      ? fileIds.map((x) => String(x)).filter(Boolean)
+      : [];
+
+    const json = JSON.stringify(ids);
+
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.SETTINGS}!A2:B100`,
+    });
+
+    const rows = res.data.values || [];
+    let found = false;
+    let rowIndex = -1;
+
+    for (let i = 0; i < rows.length; i++) {
+      const [key] = rows[i];
+      if (key && typeof key === "string" && key.trim() === "портфолио_фото") {
+        found = true;
+        rowIndex = i + 2; // +2 потому что A1 - заголовок
+        break;
+      }
+    }
+
+    if (found) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!B${rowIndex}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[json]] },
+      });
+    } else {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [["портфолио_фото", json]] },
+      });
+    }
+
+    return true;
+  }
+
+  async function addPortfolioFileId(fileId) {
+    const newId = fileId ? String(fileId).trim() : "";
+    if (!newId) {
+      throw new Error("fileId для портфолио не может быть пустым");
+    }
+
+    const existing = await getPortfolioFileIds();
+
+    // Новые фото ставим в начало (самые свежие/лучшие)
+    const next = [newId, ...existing.filter((id) => id !== newId)];
+
+    // Не раздуваем таблицу, но сохраняем запас
+    const MAX_STORE = 50;
+    const limited = next.slice(0, MAX_STORE);
+    await setPortfolioFileIds(limited);
+    return limited;
+  }
+
+  // displayIndex — индекс в массиве портфолио (0-based), которым управляет UI
+  async function deletePortfolioFileIdByIndex(displayIndex) {
+    const ids = await getPortfolioFileIds();
+    const idx = Number(displayIndex);
+    if (isNaN(idx) || idx < 0 || idx >= ids.length) return false;
+
+    ids.splice(idx, 1);
+    await setPortfolioFileIds(ids);
+    return true;
+  }
+
+  // Ссылка на Яндекс.Карты (или любую другую ссылку на маршрут)
+  async function getLocationLink() {
+    const settings = await getSettings();
+    const link = settings.ссылка_на_локацию;
+    if (link && typeof link === "string" && link.trim().length > 0) {
+      return link.trim();
+    }
+    return "";
+  }
+
+  async function setLocationLink(link) {
+    if (!link || typeof link !== "string") {
+      throw new Error("Ссылка на локацию не может быть пустой");
+    }
+
+    const trimmedLink = link.trim();
+    if (!trimmedLink) {
+      throw new Error("Ссылка на локацию не может быть пустой");
+    }
+
+    // Ожидаем ссылку в виде http(s) URL
+    const isHttpUrl =
+      trimmedLink.startsWith("http://") || trimmedLink.startsWith("https://");
+    if (!isHttpUrl) {
+      throw new Error("Ссылка должна начинаться с http:// или https://");
+    }
+
+    // Получаем все настройки
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.SETTINGS}!A2:B100`,
+    });
+
+    const rows = res.data.values || [];
+    let found = false;
+    let rowIndex = -1;
+
+    for (let i = 0; i < rows.length; i++) {
+      const [key] = rows[i];
+      if (
+        key &&
+        typeof key === "string" &&
+        key.trim() === "ссылка_на_локацию"
+      ) {
+        found = true;
+        rowIndex = i + 2;
+        break;
+      }
+    }
+
+    if (found) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!B${rowIndex}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[trimmedLink]] },
+      });
+    } else {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [["ссылка_на_локацию", trimmedLink]] },
+      });
+    }
+
+    return true;
+  }
+
   async function getBarberPhone() {
     const settings = await getSettings();
     return settings.телефон_мастера || "";
@@ -1089,6 +1260,32 @@ async function createSheetsService(config) {
         insertDataOption: "INSERT_ROWS",
         requestBody: {
           values: [["ссылка_на_чаевые", ""]],
+        },
+      });
+    }
+
+    // Инициализируем портфолио (file_id) по умолчанию
+    if (!settings.портфолио_фото) {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: {
+          values: [["портфолио_фото", "[]"]],
+        },
+      });
+    }
+
+    // Инициализируем ссылку на локацию по умолчанию
+    if (!settings.ссылка_на_локацию) {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: {
+          values: [["ссылка_на_локацию", ""]],
         },
       });
     }
@@ -2572,6 +2769,12 @@ async function createSheetsService(config) {
     getCompletedAppointments,
     getCancelledAppointmentsInPeriod,
     getNewClientsCountInPeriod,
+    getPortfolioFileIds,
+    setPortfolioFileIds,
+    addPortfolioFileId,
+    deletePortfolioFileIdByIndex,
+    getLocationLink,
+    setLocationLink,
     archiveOldAppointments,
     migrateExistingDataToArchive,
   };

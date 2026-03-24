@@ -455,6 +455,7 @@ function createBookingService({ sheetsService, config, calendarService }) {
     };
   }
 
+ 
   async function cancelAppointmentByCode(cancelCode) {
     // Комментарий: отмена записи по коду отмены (для админа, без проверки владельца)
     const appointment = await sheetsService.getAppointmentByCancelCode(

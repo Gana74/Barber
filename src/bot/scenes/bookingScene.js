@@ -217,7 +217,11 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
         await ctx.reply(
           "Ок, возвращаю в главное меню.\n\n👇 Выберите действие с помощью кнопок ниже:",
-          Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize(),
+          Markup.keyboard([
+            ["Записаться 💇‍♂️"],
+            ["Мои записи"],
+            ["Как добраться 🗺️"],
+          ]).resize(),
         );
 
         return;
@@ -276,7 +280,11 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         }
         await ctx.reply(
           "Ок, возвращаю в главное меню.\n\n👇 Выберите действие с помощью кнопок ниже:",
-          Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize(),
+          Markup.keyboard([
+            ["Записаться 💇‍♂️"],
+            ["Мои записи"],
+            ["Как добраться 🗺️"],
+          ]).resize(),
         );
         return;
       }
@@ -769,7 +777,11 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           );
           await ctx.reply(
             "Вы вернулись в главное меню.\n\n👇 Выберите действие с помощью кнопок ниже:",
-            Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize(),
+            Markup.keyboard([
+              ["Записаться 💇‍♂️"],
+              ["Мои записи"],
+              ["Как добраться 🗺️"],
+            ]).resize(),
           );
           return ctx.scene.leave();
         }
@@ -892,7 +904,11 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       // Возвращаем пользователя в главное меню
       await ctx.reply(
         "Запись завершена! Вы вернулись в главное меню.\n\n👇 Выберите действие с помощью кнопок ниже:",
-        Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]]).resize(),
+        Markup.keyboard([
+          ["Записаться 💇‍♂️"],
+          ["Мои записи"],
+          ["Как добраться 🗺️"],
+        ]).resize(),
       );
 
       return ctx.scene.leave();

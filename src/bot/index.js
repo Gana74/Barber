@@ -225,10 +225,34 @@ function createBot({ config, sheetsService, calendarService }) {
     ctx.session = {};
 
     const name = ctx.from.first_name || "друг";
+
     await ctx.reply(
-      `Привет, ${name}! Я бот мастера по услугам красоты. Здесь можно записаться на стрижку.\n\n👇 Выберите действие с помощью кнопок ниже:`,
-      Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
-        .resize(),
+      `Привет, ${name}! Я бот мастера по услугам красоты. Здесь можно записаться на стрижку.`,
+    );
+
+    // Премиальная "визитка": показываем 5-6 лучших работ из портфолио по file_id
+    try {
+      const ids = (await sheetsService.getPortfolioFileIds()) || [];
+      const best = ids.slice(0, 6);
+      if (best.length) {
+        const chatId = ctx.chat?.id || ctx.from?.id;
+        const media = best.map((fileId) => ({
+          type: "photo",
+          media: fileId,
+        }));
+        await ctx.telegram.sendMediaGroup(chatId, media);
+      }
+    } catch (e) {
+      console.warn("Failed to send portfolio media group:", e.message || e);
+    }
+
+    await ctx.reply(
+      "👇 Выберите действие с помощью кнопок ниже:",
+      Markup.keyboard([
+        ["Записаться 💇‍♂️"],
+        ["Мои записи"],
+        ["Как добраться 🗺️"],
+      ]).resize(),
     );
   });
 
@@ -272,6 +296,27 @@ function createBot({ config, sheetsService, calendarService }) {
     await ctx.reply(
       `Будущие записи:\n\n${lines.join("\n")}`,
       Markup.inlineKeyboard(keyboard),
+    );
+  });
+
+  bot.hears(["Как добраться", "Как добраться 🗺️"], async (ctx) => {
+    // Пользовательская кнопка из главного меню
+    // Если пользователь сейчас в сцене, просто выходим, чтобы не ломать визард.
+    try {
+      await ctx.scene.leave();
+    } catch (e) {}
+
+    const link = await sheetsService.getLocationLink();
+    if (!link) {
+      await ctx.reply("Локация не настроена. Обратитесь к администратору.");
+      return;
+    }
+
+    await ctx.reply(
+      "Как добраться:",
+      Markup.inlineKeyboard([
+        [Markup.button.url("Открыть в Яндекс.Картах", link)],
+      ]),
     );
   });
 
@@ -409,6 +454,8 @@ function createBot({ config, sheetsService, calendarService }) {
     ["Редактировать напоминание 21 день"],
     ["Редактировать ссылку на чаевые"],
     ["Изменить контакты"],
+    ["Загрузить фото в портфолио", "Удалить фото"],
+    ["Сохранить локацию"],
     ["Настройки расписания"],
     ["Назад в админ-меню"],
   ]).resize();
@@ -435,8 +482,11 @@ function createBot({ config, sheetsService, calendarService }) {
     ctx.session.mode = "user";
     await ctx.reply(
       "Режим пользователя.\n\n👇 Выберите действие с помощью кнопок ниже:",
-      Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
-        .resize(),
+      Markup.keyboard([
+        ["Записаться 💇‍♂️"],
+        ["Мои записи"],
+        ["Как добраться 🗺️"],
+      ]).resize(),
     );
   });
 
@@ -678,6 +728,65 @@ function createBot({ config, sheetsService, calendarService }) {
     }
   });
 
+  bot.hears("Загрузить фото в портфолио", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      ctx.session.adminAction = { type: "portfolio_upload" };
+      await ctx.reply(
+        "Пришлите фото для портфолио.\nДля отмены напишите /admin_cancel",
+      );
+    }
+  });
+
+  bot.hears("Удалить фото", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      try {
+        const ids = (await sheetsService.getPortfolioFileIds()) || [];
+        const best = ids.slice(0, 6);
+
+        if (!best.length) {
+          await ctx.reply("Портфолио пустое. Сначала загрузите фото.");
+          return;
+        }
+
+        await ctx.reply(
+          "Текущие фото (самые свежие) для удаления. Сейчас показываю их на экране:",
+        );
+
+        for (let i = 0; i < best.length; i += 1) {
+          await ctx.replyWithPhoto(best[i], { caption: `Фото №${i + 1}` });
+        }
+
+        ctx.session.adminAction = {
+          type: "portfolio_delete",
+          maxIndex: best.length, // 1..maxIndex в UI
+        };
+
+        await ctx.reply(
+          `Отправьте номер фото для удаления: 1..${best.length}.\nДля отмены напишите /admin_cancel`,
+        );
+      } catch (e) {
+        await ctx.reply(`Ошибка при получении портфолио: ${e.message || e}`);
+      }
+    }
+  });
+
+  bot.hears("Сохранить локацию", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      try {
+        const current = await sheetsService.getLocationLink();
+        await ctx.reply(
+          `Текущая ссылка на локацию:\n${current || "не установлена"}\n\nПришлите новую ссылку на маршрут (http:// или https://).\nДля отмены напишите /admin_cancel`,
+        );
+        ctx.session.adminAction = { type: "save_location" };
+      } catch (e) {
+        await ctx.reply(`Ошибка при получении локации: ${e.message || e}`);
+      }
+    }
+  });
+
   bot.hears("⚙️ Настройки", async (ctx) => {
     if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
@@ -702,10 +811,7 @@ function createBot({ config, sheetsService, calendarService }) {
       ["Назад в админ-меню"],
     ]).resize();
 
-    await ctx.reply(
-      "Настройки расписания. Выберите действие:",
-      keyboard,
-    );
+    await ctx.reply("Настройки расписания. Выберите действие:", keyboard);
   });
 
   bot.hears("Просмотр расписания на дату", async (ctx) => {
@@ -745,9 +851,7 @@ function createBot({ config, sheetsService, calendarService }) {
     try {
       const rows = (await sheetsService.getWorkHoursRaw()) || [];
       const nonEmpty = rows.filter(
-        (r) =>
-          (r.date || r.rawDate || "").trim() ||
-          (r.weekday || "").trim(),
+        (r) => (r.date || r.rawDate || "").trim() || (r.weekday || "").trim(),
       );
 
       if (!nonEmpty.length) {
@@ -757,8 +861,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
       const lines = nonEmpty.map((r, idx) => {
         const label =
-          (r.date || r.rawDate || "").trim() ||
-          `шаблон: ${r.weekday}`;
+          (r.date || r.rawDate || "").trim() || `шаблон: ${r.weekday}`;
         const base = `#${idx + 1}. ${label}`;
         const work = r.start && r.end ? ` ${r.start}–${r.end}` : "";
         const lunch =
@@ -769,16 +872,14 @@ function createBot({ config, sheetsService, calendarService }) {
       });
 
       await ctx.reply(
-        "Текущее окно расписания (первые 50 строк листа \"Расписание\"):\n\n" +
+        'Текущее окно расписания (первые 50 строк листа "Расписание"):\n\n' +
           lines.join("\n"),
       );
       await ctx.reply(
-        "Чтобы отредактировать конкретную дату, используйте пункт \"Изменить/добавить расписание на дату\" и укажите нужную дату.",
+        'Чтобы отредактировать конкретную дату, используйте пункт "Изменить/добавить расписание на дату" и укажите нужную дату.',
       );
     } catch (e) {
-      await ctx.reply(
-        `Ошибка при получении расписания: ${e.message || e}`,
-      );
+      await ctx.reply(`Ошибка при получении расписания: ${e.message || e}`);
     }
   });
 
@@ -788,9 +889,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
     try {
       const rows = (await sheetsService.getWorkHoursRaw()) || [];
-      const templates = rows.filter(
-        (r) => !r.date && (r.weekday || "").trim(),
-      );
+      const templates = rows.filter((r) => !r.date && (r.weekday || "").trim());
 
       if (!templates.length) {
         await ctx.reply(
@@ -807,19 +906,16 @@ function createBot({ config, sheetsService, calendarService }) {
           return `${r.weekday}${work}${lunch}`;
         });
         await ctx.reply(
-          "Текущие шаблоны по дням недели:\n\n" +
-            lines.join("\n"),
+          "Текущие шаблоны по дням недели:\n\n" + lines.join("\n"),
         );
       }
 
       ctx.session.scheduleAction = { type: "weekday_edit", step: "weekday" };
       await ctx.reply(
-        "Укажите день недели (например, Пн, Вт, Ср или mon/tue/...)\nили напишите \"удалить Пн\" чтобы удалить шаблон для Пн:",
+        'Укажите день недели (например, Пн, Вт, Ср или mon/tue/...)\nили напишите "удалить Пн" чтобы удалить шаблон для Пн:',
       );
     } catch (e) {
-      await ctx.reply(
-        `Ошибка при получении шаблонов: ${e.message || e}`,
-      );
+      await ctx.reply(`Ошибка при получении шаблонов: ${e.message || e}`);
     }
   });
 
@@ -829,8 +925,11 @@ function createBot({ config, sheetsService, calendarService }) {
     ctx.session.mode = "user";
     await ctx.reply(
       "Режим пользователя.\n\n👇 Выберите действие с помощью кнопок ниже:",
-      Markup.keyboard([["Записаться 💇‍♂️"], ["Мои записи"]])
-        .resize(),
+      Markup.keyboard([
+        ["Записаться 💇‍♂️"],
+        ["Мои записи"],
+        ["Как добраться 🗺️"],
+      ]).resize(),
     );
   });
 
@@ -1261,9 +1360,7 @@ function createBot({ config, sheetsService, calendarService }) {
 
         if (scheduleAction.type === "view") {
           try {
-            const workHours = await sheetsService.getWorkHoursForDate(
-              isoDate,
-            );
+            const workHours = await sheetsService.getWorkHoursForDate(isoDate);
             if (!workHours || !workHours.start || !workHours.end) {
               await ctx.reply("На эту дату расписание не задано (выходной).");
             } else {
@@ -1313,7 +1410,9 @@ function createBot({ config, sheetsService, calendarService }) {
         const dateInput = scheduleAction.dateInput;
         if (!dateInput) {
           ctx.session.scheduleAction = null;
-          await ctx.reply("Сессия настройки расписания истекла. Начните заново.");
+          await ctx.reply(
+            "Сессия настройки расписания истекла. Начните заново.",
+          );
           return;
         }
 
@@ -1366,7 +1465,7 @@ function createBot({ config, sheetsService, calendarService }) {
             );
           } else {
             await ctx.reply(
-              "Обед будет отсутствовать. Подтвердите сохранение: напишите \"Да\" или \"Нет\".",
+              'Обед будет отсутствовать. Подтвердите сохранение: напишите "Да" или "Нет".',
             );
             ctx.session.scheduleAction.step = "confirm";
           }
@@ -1405,7 +1504,9 @@ function createBot({ config, sheetsService, calendarService }) {
         if (scheduleAction.step === "confirm") {
           const answer = (text || "").trim().toLowerCase();
           if (answer !== "да" && answer !== "нет") {
-            await ctx.reply('Ответьте "Да" для сохранения или "Нет" для отмены.');
+            await ctx.reply(
+              'Ответьте "Да" для сохранения или "Нет" для отмены.',
+            );
             return;
           }
           if (answer === "нет") {
@@ -1444,7 +1545,7 @@ function createBot({ config, sheetsService, calendarService }) {
       if (scheduleAction2.step === "weekday") {
         if (!text) {
           await ctx.reply(
-            "Укажите день недели (например, Пн, Вт, Ср или mon/tue/...) или \"удалить Пн\":",
+            'Укажите день недели (например, Пн, Вт, Ср или mon/tue/...) или "удалить Пн":',
           );
           return;
         }
@@ -1455,7 +1556,7 @@ function createBot({ config, sheetsService, calendarService }) {
           const dayToken = parts[1];
           if (!dayToken) {
             await ctx.reply(
-              "Укажите день для удаления, например: \"удалить Пн\".",
+              'Укажите день для удаления, например: "удалить Пн".',
             );
             return;
           }
@@ -1465,9 +1566,7 @@ function createBot({ config, sheetsService, calendarService }) {
               `Шаблон для дня \"${dayToken}\" удалён (если существовал).`,
             );
           } catch (e) {
-            await ctx.reply(
-              `Ошибка при удалении шаблона: ${e.message || e}`,
-            );
+            await ctx.reply(`Ошибка при удалении шаблона: ${e.message || e}`);
           }
           ctx.session.scheduleAction = null;
           return;
@@ -1532,7 +1631,7 @@ function createBot({ config, sheetsService, calendarService }) {
             `Шаблон для дня \"${d}\":`,
             `Рабочее время: ${scheduleAction2.start}–${scheduleAction2.end}`,
             "Обед: нет",
-            '',
+            "",
             'Подтвердите сохранение шаблона: напишите "Да" или "Нет".',
           ].join("\n");
           await ctx.reply(summary);
@@ -1561,7 +1660,7 @@ function createBot({ config, sheetsService, calendarService }) {
           `Шаблон для дня \"${d}\":`,
           `Рабочее время: ${scheduleAction2.start}–${scheduleAction2.end}`,
           `Обед: ${scheduleAction2.lunchStart}–${scheduleAction2.lunchEnd}`,
-          '',
+          "",
           'Подтвердите сохранение шаблона: напишите "Да" или "Нет".',
         ].join("\n");
         await ctx.reply(summary);
@@ -1571,9 +1670,7 @@ function createBot({ config, sheetsService, calendarService }) {
       if (scheduleAction2.step === "weekday_confirm") {
         const answer = (text || "").trim().toLowerCase();
         if (answer !== "да" && answer !== "нет") {
-          await ctx.reply(
-            'Ответьте "Да" для сохранения или "Нет" для отмены.',
-          );
+          await ctx.reply('Ответьте "Да" для сохранения или "Нет" для отмены.');
           return;
         }
         if (answer === "нет") {
@@ -1583,22 +1680,17 @@ function createBot({ config, sheetsService, calendarService }) {
         }
 
         try {
-          await sheetsService.setWeekdayTemplate(
-            scheduleAction2.weekdayKey,
-            {
-              start: scheduleAction2.start,
-              end: scheduleAction2.end,
-              lunchStart: scheduleAction2.lunchStart,
-              lunchEnd: scheduleAction2.lunchEnd,
-            },
-          );
+          await sheetsService.setWeekdayTemplate(scheduleAction2.weekdayKey, {
+            start: scheduleAction2.start,
+            end: scheduleAction2.end,
+            lunchStart: scheduleAction2.lunchStart,
+            lunchEnd: scheduleAction2.lunchEnd,
+          });
           await ctx.reply(
             `Шаблон для дня \"${scheduleAction2.weekdayKey}\" сохранён.`,
           );
         } catch (e) {
-          await ctx.reply(
-            `Ошибка при сохранении шаблона: ${e.message || e}`,
-          );
+          await ctx.reply(`Ошибка при сохранении шаблона: ${e.message || e}`);
         }
 
         ctx.session.scheduleAction = null;
@@ -1848,11 +1940,11 @@ function createBot({ config, sheetsService, calendarService }) {
           // Безопасная отправка уведомления пользователю с обработкой ошибок
           await safeSendMessage(
             ctx.telegram,
-              String(appointment.telegramId),
-              `Ваша запись на ${formatDate(appointment.date)} ${
-                appointment.timeStart
-              } отменена менеджером.`,
-            );
+            String(appointment.telegramId),
+            `Ваша запись на ${formatDate(appointment.date)} ${
+              appointment.timeStart
+            } отменена менеджером.`,
+          );
         }
       }
       delete ctx.session.adminAction;
@@ -2095,6 +2187,72 @@ function createBot({ config, sheetsService, calendarService }) {
       return;
     }
 
+    if (action === "portfolio_delete") {
+      const trimmed = (text || "").trim();
+      const displayNumber = Number(trimmed);
+
+      const ids = (await sheetsService.getPortfolioFileIds()) || [];
+      const maxInStore = Math.min(6, ids.length);
+
+      if (
+        isNaN(displayNumber) ||
+        displayNumber < 1 ||
+        displayNumber > maxInStore
+      ) {
+        await ctx.reply(
+          `Некорректный номер. Введите число от 1 до ${maxInStore}.\nДля отмены напишите /admin_cancel`,
+        );
+        return;
+      }
+
+      try {
+        const ok = await sheetsService.deletePortfolioFileIdByIndex(
+          displayNumber - 1, // UI: 1..N => 0..N-1
+        );
+
+        if (!ok) {
+          await ctx.reply("Не удалось удалить фото. Попробуйте другой номер.");
+          return;
+        }
+
+        await ctx.reply(`✅ Фото №${displayNumber} удалено из портфолио.`);
+        delete ctx.session.adminAction;
+        return;
+      } catch (e) {
+        await ctx.reply(`Ошибка при удалении фото: ${e.message || e}`);
+        return;
+      }
+    }
+
+    if (action === "save_location") {
+      const trimmed = (text || "").trim();
+      if (!trimmed) {
+        await ctx.reply(
+          "Ссылка не может быть пустой. /admin_cancel для отмены.",
+        );
+        return;
+      }
+
+      const isHttpUrl =
+        trimmed.startsWith("http://") || trimmed.startsWith("https://");
+      if (!isHttpUrl) {
+        await ctx.reply(
+          "Ссылка должна начинаться с http:// или https://. /admin_cancel для отмены.",
+        );
+        return;
+      }
+
+      try {
+        await sheetsService.setLocationLink(trimmed);
+        await ctx.reply("✅ Локация сохранена.");
+        delete ctx.session.adminAction;
+        return;
+      } catch (e) {
+        await ctx.reply(`Ошибка при сохранении локации: ${e.message || e}`);
+        return;
+      }
+    }
+
     if (action === "broadcast") {
       const message = text;
       if (!message) {
@@ -2182,7 +2340,7 @@ function createBot({ config, sheetsService, calendarService }) {
       return next();
     const action =
       ctx.session && ctx.session.adminAction && ctx.session.adminAction.type;
-    if (action !== "broadcast") return next();
+    if (action !== "broadcast" && action !== "portfolio_upload") return next();
 
     const photos = ctx.message.photo || [];
     if (!photos.length) return next();
@@ -2190,6 +2348,19 @@ function createBot({ config, sheetsService, calendarService }) {
     const best = photos[photos.length - 1];
     const fileId = best.file_id;
     const caption = (ctx.message.caption || "").trim();
+
+    if (action === "portfolio_upload") {
+      try {
+        await sheetsService.addPortfolioFileId(fileId);
+        await ctx.reply("✅ Фото добавлено в портфолио.");
+      } catch (e) {
+        await ctx.reply(
+          `Ошибка при сохранении фото в портфолио: ${e.message || e}`,
+        );
+      }
+      delete ctx.session.adminAction;
+      return;
+    }
 
     // Используем getClientsForBroadcast() для получения клиентов, которым можно отправить сегодня
     const clientsForBroadcast = sheetsService.getClientsForBroadcast
