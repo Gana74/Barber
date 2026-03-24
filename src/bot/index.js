@@ -449,14 +449,14 @@ function createBot({ config, sheetsService, calendarService }) {
   ]).resize();
 
   const settingsKeyboard = Markup.keyboard([
-    ["Забанить пользователя", "Разбанить пользователя"],
+    ["Настройки расписания"],
     ["Управление услугами"],
     ["Редактировать напоминание 21 день"],
     ["Редактировать ссылку на чаевые"],
     ["Изменить контакты"],
-    ["Загрузить фото в портфолио", "Удалить фото"],
+    ["Забанить пользователя", "Разбанить пользователя"],
+    ["Загрузить фото", "Удалить фото"],
     ["Сохранить локацию"],
-    ["Настройки расписания"],
     ["Назад в админ-меню"],
   ]).resize();
 
@@ -728,7 +728,7 @@ function createBot({ config, sheetsService, calendarService }) {
     }
   });
 
-  bot.hears("Загрузить фото в портфолио", async (ctx) => {
+  bot.hears("Загрузить фото", async (ctx) => {
     if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       ctx.session.adminAction = { type: "portfolio_upload" };
