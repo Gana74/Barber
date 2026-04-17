@@ -306,17 +306,24 @@ function createBot({ config, sheetsService, calendarService }) {
       await ctx.scene.leave();
     } catch (e) {}
 
-    const link = await sheetsService.getLocationLink();
-    if (!link) {
+    const yandexLink = await sheetsService.getLocationLink();
+    const gisLink = await sheetsService.getLocationLink2gis();
+    if (!yandexLink && !gisLink) {
       await ctx.reply("Локация не настроена. Обратитесь к администратору.");
       return;
     }
 
+    const buttons = [];
+    if (yandexLink) {
+      buttons.push(Markup.button.url("Открыть в Яндекс.Картах", yandexLink));
+    }
+    if (gisLink) {
+      buttons.push(Markup.button.url("Открыть в 2ГИС", gisLink));
+    }
+
     await ctx.reply(
       "Как добраться:",
-      Markup.inlineKeyboard([
-        [Markup.button.url("Открыть в Яндекс.Картах", link)],
-      ]),
+      Markup.inlineKeyboard(buttons.map((button) => [button])),
     );
   });
 
@@ -456,6 +463,7 @@ function createBot({ config, sheetsService, calendarService }) {
     ["Изменить контакты"],
     ["Забанить пользователя", "Разбанить пользователя"],
     ["Загрузить фото", "Удалить фото"],
+    ["Сохранить ссылку на 2ГИС"],
     ["Сохранить локацию"],
     ["Назад в админ-меню"],
   ]).resize();
@@ -768,6 +776,21 @@ function createBot({ config, sheetsService, calendarService }) {
         );
       } catch (e) {
         await ctx.reply(`Ошибка при получении портфолио: ${e.message || e}`);
+      }
+    }
+  });
+
+  bot.hears("Сохранить ссылку на 2ГИС", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (ctx.session && ctx.session.mode === "admin") {
+      try {
+        const current = await sheetsService.getLocationLink2gis();
+        await ctx.reply(
+          `Текущая ссылка на 2ГИС:\n${current || "не установлена"}\n\nПришлите новую ссылку на 2ГИС (http:// или https://).\nДля отмены напишите /admin_cancel`,
+        );
+        ctx.session.adminAction = { type: "save_location_2gis" };
+      } catch (e) {
+        await ctx.reply(`Ошибка при получении ссылки 2ГИС: ${e.message || e}`);
       }
     }
   });
@@ -2249,6 +2272,35 @@ function createBot({ config, sheetsService, calendarService }) {
         return;
       } catch (e) {
         await ctx.reply(`Ошибка при сохранении локации: ${e.message || e}`);
+        return;
+      }
+    }
+
+    if (action === "save_location_2gis") {
+      const trimmed = (text || "").trim();
+      if (!trimmed) {
+        await ctx.reply(
+          "Ссылка не может быть пустой. /admin_cancel для отмены.",
+        );
+        return;
+      }
+
+      const isHttpUrl =
+        trimmed.startsWith("http://") || trimmed.startsWith("https://");
+      if (!isHttpUrl) {
+        await ctx.reply(
+          "Ссылка должна начинаться с http:// или https://. /admin_cancel для отмены.",
+        );
+        return;
+      }
+
+      try {
+        await sheetsService.setLocationLink2gis(trimmed);
+        await ctx.reply("✅ Ссылка на 2ГИС сохранена.");
+        delete ctx.session.adminAction;
+        return;
+      } catch (e) {
+        await ctx.reply(`Ошибка при сохранении ссылки 2ГИС: ${e.message || e}`);
         return;
       }
     }

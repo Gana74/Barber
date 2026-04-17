@@ -1075,6 +1075,69 @@ async function createSheetsService(config) {
     return true;
   }
 
+  async function getLocationLink2gis() {
+    const settings = await getSettings();
+    const link = settings.ссылка_на_2гис;
+    if (link && typeof link === "string" && link.trim().length > 0) {
+      return link.trim();
+    }
+    return "";
+  }
+
+  async function setLocationLink2gis(link) {
+    if (!link || typeof link !== "string") {
+      throw new Error("Ссылка на 2ГИС не может быть пустой");
+    }
+
+    const trimmedLink = link.trim();
+    if (!trimmedLink) {
+      throw new Error("Ссылка на 2ГИС не может быть пустой");
+    }
+
+    const isHttpUrl =
+      trimmedLink.startsWith("http://") || trimmedLink.startsWith("https://");
+    if (!isHttpUrl) {
+      throw new Error("Ссылка должна начинаться с http:// или https://");
+    }
+
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.google.sheetsId,
+      range: `${SHEET_NAMES.SETTINGS}!A2:B100`,
+    });
+
+    const rows = res.data.values || [];
+    let found = false;
+    let rowIndex = -1;
+
+    for (let i = 0; i < rows.length; i++) {
+      const [key] = rows[i];
+      if (key && typeof key === "string" && key.trim() === "ссылка_на_2гис") {
+        found = true;
+        rowIndex = i + 2;
+        break;
+      }
+    }
+
+    if (found) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!B${rowIndex}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[trimmedLink]] },
+      });
+    } else {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.google.sheetsId,
+        range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [["ссылка_на_2гис", trimmedLink]] },
+      });
+    }
+
+    return true;
+  }
+
   async function getBarberPhone() {
     const settings = await getSettings();
     return settings.телефон_мастера || "";
@@ -2773,7 +2836,9 @@ async function createSheetsService(config) {
     addPortfolioFileId,
     deletePortfolioFileIdByIndex,
     getLocationLink,
+    getLocationLink2gis,
     setLocationLink,
+    setLocationLink2gis,
     archiveOldAppointments,
     migrateExistingDataToArchive,
   };
