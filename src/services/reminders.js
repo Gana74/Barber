@@ -20,7 +20,7 @@ const cronLocks = {
   dayReminder: false,
   twoHourReminder: false,
   autoComplete: false,
-  reminder21Day: false,
+  reminder28Day: false,
   sessionCleanup: false,
   broadcastMarkReset: false,
 };
@@ -120,9 +120,9 @@ function setupReminders({
             barberAddress,
           ].join("\n");
           const result = await safeSendMessage(bot, app.telegramId, msg, {
-              parse_mode: "Markdown",
-            });
-          
+            parse_mode: "Markdown",
+          });
+
           if (result) {
             sentCount++;
           } else {
@@ -230,9 +230,9 @@ function setupReminders({
             ].join("\n");
 
             const result = await safeSendMessage(bot, app.telegramId, msg, {
-                parse_mode: "Markdown",
-              });
-            
+              parse_mode: "Markdown",
+            });
+
             if (result) {
               twoHourRemindedIds.add(reminderKey);
               sentCount++;
@@ -263,7 +263,6 @@ function setupReminders({
       timezone: config.defaultTimezone,
     },
   );
-
 
   // Автоматическое завершение записей: каждые 30 минут проверяем прошедшие записи
   // Статус меняется на "исполнено" сразу после окончания времени услуги
@@ -335,11 +334,7 @@ function setupReminders({
                     }
 
                     // Безопасная отправка с обработкой ошибок
-                    await safeSendMessage(
-                      bot,
-                      String(app.telegramId),
-                      message,
-                    );
+                    await safeSendMessage(bot, String(app.telegramId), message);
                   } catch (err) {
                     // Дополнительная обработка, если safeSendMessage вернул ошибку
                     // (хотя она должна обрабатываться внутри)
@@ -388,28 +383,28 @@ function setupReminders({
     },
   );
 
-  // Напоминание клиентам, которые не подстригались более 21 дня
+  // Напоминание клиентам, которые не подстригались более 28 дней
   cron.schedule(
     "0 11 * * *",
     async () => {
       // Блокировка одновременного выполнения
-      if (cronLocks.reminder21Day) {
-        console.log("Напоминания 21 день уже выполняются, пропускаем");
+      if (cronLocks.reminder28Day) {
+        console.log("Напоминания 28 дней уже выполняются, пропускаем");
         return;
       }
-      cronLocks.reminder21Day = true;
+      cronLocks.reminder28Day = true;
       try {
         const timezone = await sheetsService.getTimezone();
         const nowTz = dayjs().tz(timezone);
 
         const clientsForReminder =
-          await sheetsService.getClientsFor21DayReminder();
+          await sheetsService.getClientsFor28DayReminder();
 
         if (!clientsForReminder || clientsForReminder.length === 0) {
           console.log(
             `[${dayjs().format(
               "YYYY-MM-DD HH:mm:ss",
-            )}] Напоминания 21 день: нет клиентов для напоминания`,
+            )}] Напоминания 28 дней: нет клиентов для напоминания`,
           );
           return;
         }
@@ -418,7 +413,7 @@ function setupReminders({
         let errorCount = 0;
 
         // Получаем текст сообщения из настроек
-        const messageTemplate = await sheetsService.get21DayReminderMessage();
+        const messageTemplate = await sheetsService.get28DayReminderMessage();
 
         for (const client of clientsForReminder) {
           if (!client.telegramId) continue;
@@ -429,12 +424,12 @@ function setupReminders({
           const msg = messageTemplate.replace(/{clientName}/g, clientName);
 
           const result = await safeSendMessage(bot, client.telegramId, msg, {
-              parse_mode: "Markdown",
-            });
+            parse_mode: "Markdown",
+          });
 
           if (result) {
             // Помечаем напоминание как отправленное только если сообщение успешно отправлено
-            await sheetsService.mark21DayReminderSent(client.telegramId);
+            await sheetsService.mark28DayReminderSent(client.telegramId);
             sentCount++;
           } else {
             errorCount++;
@@ -450,12 +445,12 @@ function setupReminders({
         console.log(
           `[${dayjs().format(
             "YYYY-MM-DD HH:mm:ss",
-          )}] Напоминания 21 день отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`,
+          )}] Напоминания 28 дней отправлены: ${sentCount} успешно, ${errorCount} с ошибкой`,
         );
       } catch (err) {
-        console.error("Критическая ошибка в напоминаниях 21 день:", err);
+        console.error("Критическая ошибка в напоминаниях 28 дней:", err);
       } finally {
-        cronLocks.reminder21Day = false;
+        cronLocks.reminder28Day = false;
       }
     },
     {

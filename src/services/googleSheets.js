@@ -87,7 +87,7 @@ const HEADERS = {
     "Всего_записей",
     "BanStatus",
     "BanReason",
-    "Напоминание_21день_UTC",
+    "Напоминание_28день_UTC",
     "Последняя_рассылка_UTC",
   ],
   [SHEET_NAMES.WORKHOURS]: [
@@ -777,15 +777,15 @@ async function createSheetsService(config) {
     return settings.таймзона || config.defaultTimezone;
   }
 
-  async function get21DayReminderMessage() {
+  async function get28DayReminderMessage() {
     const settings = await getSettings();
     return (
-      settings.напоминание_21день_текст ||
+      settings.напоминание_28день_текст ||
       "Привет, {clientName}! Тебя давно небыло на стрижке, пора подстричься!"
     );
   }
 
-  async function set21DayReminderMessage(message) {
+  async function set28DayReminderMessage(message) {
     if (
       !message ||
       typeof message !== "string" ||
@@ -807,14 +807,13 @@ async function createSheetsService(config) {
     // Ищем существующую запись (нормализуем ключ для сравнения)
     for (let i = 0; i < rows.length; i++) {
       const [key] = rows[i];
-      if (
-        key &&
-        typeof key === "string" &&
-        key.trim() === "напоминание_21день_текст"
-      ) {
-        found = true;
-        rowIndex = i + 2; // +2 потому что A1 - заголовок, A2 - первая строка данных
-        break;
+      if (key && typeof key === "string") {
+        const trimmedKey = key.trim();
+        if (trimmedKey === "напоминание_28день_текст") {
+          found = true;
+          rowIndex = i + 2; // +2 потому что A1 - заголовок, A2 - первая строка данных
+          break;
+        }
       }
     }
 
@@ -833,7 +832,7 @@ async function createSheetsService(config) {
         range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
         valueInputOption: "RAW",
         insertDataOption: "INSERT_ROWS",
-        requestBody: { values: [["напоминание_21день_текст", message.trim()]] },
+        requestBody: { values: [["напоминание_28день_текст", message.trim()]] },
       });
     }
 
@@ -1235,7 +1234,7 @@ async function createSheetsService(config) {
       });
     }
     // Инициализируем дефолтное сообщение напоминания, если его нет
-    if (!settings.напоминание_21день_текст) {
+    if (!settings.напоминание_28день_текст) {
       await sheets.spreadsheets.values.append({
         spreadsheetId: config.google.sheetsId,
         range: `${SHEET_NAMES.SETTINGS}!A2:B2`,
@@ -1244,7 +1243,7 @@ async function createSheetsService(config) {
         requestBody: {
           values: [
             [
-              "напоминание_21день_текст",
+              "напоминание_28день_текст",
               "Привет, {clientName}! Тебя давно небыло на стрижке, пора подстричься!",
             ],
           ],
@@ -1632,7 +1631,7 @@ async function createSheetsService(config) {
               1,
               "", // BanStatus
               "", // BanReason
-              "", // Напоминание_21день_UTC
+              "", // Напоминание_28день_UTC
               "", // Последняя_рассылка_UTC
             ],
           ],
@@ -1653,7 +1652,7 @@ async function createSheetsService(config) {
       rowValues[5] = phone || rowValues[5] || "";
       rowValues[6] = lastAppointmentAtUtc || rowValues[6] || "";
       rowValues[7] = existingTotal + 1;
-      // Напоминание_21день_UTC (индекс 10) не обновляем при upsert
+      // Напоминание_28день_UTC (индекс 10) не обновляем при upsert
       // Последняя_рассылка_UTC (индекс 11) не обновляем при upsert
 
       await sheets.spreadsheets.values.update({
@@ -1926,7 +1925,7 @@ async function createSheetsService(config) {
         Всего_записей,
         BanStatus,
         BanReason,
-        Напоминание_21день_UTC,
+        Напоминание_28день_UTC,
         Последняя_рассылка_UTC,
       ] = row;
       return {
@@ -1940,7 +1939,7 @@ async function createSheetsService(config) {
         total: Number(Всего_записей) || 0,
         banned: String(BanStatus || "").toLowerCase() === "banned",
         banReason: BanReason || "",
-        reminder21DaySentAtUtc: Напоминание_21день_UTC || "",
+        reminder28DaySentAtUtc: Напоминание_28день_UTC || "",
         lastBroadcastSentAtUtc: Последняя_рассылка_UTC || "",
       };
     });
@@ -2160,10 +2159,10 @@ async function createSheetsService(config) {
     );
   }
 
-  async function getClientsFor21DayReminder() {
+  async function getClientsFor28DayReminder() {
     // Комментарий: оптимизированная версия - использует lastAppointmentAtUtc как основной источник
     console.log(
-      `[getClientsFor21DayReminder] Начало проверки в ${dayjs().utc().toISOString()}`,
+      `[getClientsFor28DayReminder] Начало проверки в ${dayjs().utc().toISOString()}`,
     );
     const clients = await getAllClients();
 
@@ -2179,7 +2178,7 @@ async function createSheetsService(config) {
     const clientsForReminder = [];
 
     console.log(
-      `[getClientsFor21DayReminder] Проверка ${clients.length} клиентов, текущее время UTC: ${now.toISOString()}`,
+      `[getClientsFor28DayReminder] Проверка ${clients.length} клиентов, текущее время UTC: ${now.toISOString()}`,
     );
 
     for (const client of clients) {
@@ -2190,8 +2189,8 @@ async function createSheetsService(config) {
 
       // Проверяем, что напоминание еще не отправлялось
       if (
-        client.reminder21DaySentAtUtc &&
-        client.reminder21DaySentAtUtc.trim() !== ""
+        client.reminder28DaySentAtUtc &&
+        client.reminder28DaySentAtUtc.trim() !== ""
       ) {
         continue;
       }
@@ -2218,11 +2217,11 @@ async function createSheetsService(config) {
       const diffDays = diffMs / (24 * 60 * 60 * 1000);
       const daysSinceLastHaircut = Math.floor(diffDays);
 
-      // Проверяем, что прошло >= 21 день (21 * 24 часа = 504 часа)
-      // Используем точное сравнение: если прошло 21 день или больше (>= 21 * 24 часа)
-      if (diffDays >= 21) {
+      // Проверяем, что прошло >= 28 дней (28 * 24 часа = 672 часа)
+      // Используем точное сравнение: если прошло 28 дней или больше (>= 28 * 24 часа)
+      if (diffDays >= 28) {
         console.log(
-          `[getClientsFor21DayReminder] Клиент ${client.telegramId}: последняя запись ${lastHaircutDate.toISOString()}, прошло ${diffDays.toFixed(2)} дней (${daysSinceLastHaircut} полных дней)`,
+          `[getClientsFor28DayReminder] Клиент ${client.telegramId}: последняя запись ${lastHaircutDate.toISOString()}, прошло ${diffDays.toFixed(2)} дней (${daysSinceLastHaircut} полных дней)`,
         );
         clientsForReminder.push({
           ...client,
@@ -2233,13 +2232,13 @@ async function createSheetsService(config) {
     }
 
     console.log(
-      `[getClientsFor21DayReminder] Найдено клиентов для напоминания: ${clientsForReminder.length}`,
+      `[getClientsFor28DayReminder] Найдено клиентов для напоминания: ${clientsForReminder.length}`,
     );
 
     return clientsForReminder;
   }
 
-  async function mark21DayReminderSent(telegramId) {
+  async function mark28DayReminderSent(telegramId) {
     // Комментарий: помечаем, что напоминание отправлено
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
@@ -2262,7 +2261,7 @@ async function createSheetsService(config) {
     const rowNumber = targetRowIndex + 2;
     const reminderSentAtUtc = dayjs().utc().toISOString();
 
-    // Обновляем только столбец K (индекс 10) - Напоминание_21день_UTC
+    // Обновляем только столбец K (индекс 10) - Напоминание_28день_UTC
     await sheets.spreadsheets.values.update({
       spreadsheetId: config.google.sheetsId,
       range: `${SHEET_NAMES.CLIENTS}!K${rowNumber}`,
@@ -2275,7 +2274,7 @@ async function createSheetsService(config) {
     return true;
   }
 
-  async function clear21DayReminderSentAt(telegramId) {
+  async function clear28DayReminderSentAt(telegramId) {
     // Комментарий: очищаем поле напоминания при создании новой записи
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: config.google.sheetsId,
@@ -2297,7 +2296,7 @@ async function createSheetsService(config) {
 
     const rowNumber = targetRowIndex + 2;
 
-    // Очищаем столбец K (индекс 10) - Напоминание_21день_UTC
+    // Очищаем столбец K (индекс 10) - Напоминание_28день_UTC
     await sheets.spreadsheets.values.update({
       spreadsheetId: config.google.sheetsId,
       range: `${SHEET_NAMES.CLIENTS}!K${rowNumber}`,
@@ -2731,8 +2730,8 @@ async function createSheetsService(config) {
     ensureSheetsStructure,
     getSettings,
     getTimezone,
-    get21DayReminderMessage,
-    set21DayReminderMessage,
+    get28DayReminderMessage,
+    set28DayReminderMessage,
     getTipsLink,
     setTipsLink,
     getBarberPhone,
@@ -2763,9 +2762,9 @@ async function createSheetsService(config) {
     getUserBanStatus,
     setUserBanStatus,
     getAllAppointmentsForClient,
-    getClientsFor21DayReminder,
-    mark21DayReminderSent,
-    clear21DayReminderSentAt,
+    getClientsFor28DayReminder,
+    mark28DayReminderSent,
+    clear28DayReminderSentAt,
     getCompletedAppointments,
     getCancelledAppointmentsInPeriod,
     getNewClientsCountInPeriod,

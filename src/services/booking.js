@@ -56,11 +56,11 @@ function buildSlotsForDay({
   if (workday && workday.startHour != null) {
     dayStart = dayjs.tz(
       `${dateStr}T${String(workday.startHour).padStart(2, "0")}:00:00`,
-      timezone
+      timezone,
     );
     dayEnd = dayjs.tz(
       `${dateStr}T${String(workday.endHour).padStart(2, "0")}:00:00`,
-      timezone
+      timezone,
     );
   } else if (workday && workday.start && workday.end) {
     // workday.start/end expected as 'HH:mm'
@@ -96,7 +96,7 @@ function buildSlotsForDay({
     if (workday && workday.lunchStart && workday.lunchEnd) {
       const lunchStart = dayjs.tz(
         `${dateStr}T${workday.lunchStart}:00`,
-        timezone
+        timezone,
       );
       const lunchEnd = dayjs.tz(`${dateStr}T${workday.lunchEnd}:00`, timezone);
       if (lunchStart.isBefore(lunchEnd)) {
@@ -126,8 +126,8 @@ function buildSlotsForDay({
         slotStart.valueOf(),
         slotEnd.valueOf(),
         interval.start.valueOf(),
-        interval.end.valueOf()
-      )
+        interval.end.valueOf(),
+      ),
     );
 
     if (!isBusy) {
@@ -156,7 +156,7 @@ function createBookingService({ sheetsService, config, calendarService }) {
     // Важно: для актуальности блокировок/расписания читаем без кэша
     const { schedule, appointments } = await sheetsService.getDaySchedule(
       dateStr,
-      { fresh: true }
+      { fresh: true },
     );
 
     const workHours =
@@ -185,7 +185,7 @@ function createBookingService({ sheetsService, config, calendarService }) {
     // Важно: для актуальности блокировок/расписания читаем без кэша
     const { schedule, appointments } = await sheetsService.getDaySchedule(
       dateStr,
-      { fresh: true }
+      { fresh: true },
     );
     const workHours =
       (sheetsService.getWorkHoursForDate &&
@@ -339,10 +339,10 @@ function createBookingService({ sheetsService, config, calendarService }) {
       lastAppointmentAtUtc: createdAtUtc,
     });
 
-    // Очищаем флаг отправки 21-дневного напоминания при новой записи
-    if (client.telegramId && sheetsService.clear21DayReminderSentAt) {
+    // Очищаем флаг отправки 28-дневного напоминания при новой записи
+    if (client.telegramId && sheetsService.clear28DayReminderSentAt) {
       try {
-        await sheetsService.clear21DayReminderSentAt(client.telegramId);
+        await sheetsService.clear28DayReminderSentAt(client.telegramId);
       } catch (e) {
         // не блокируем при ошибке очистки
       }
@@ -354,12 +354,12 @@ function createBookingService({ sheetsService, config, calendarService }) {
         // не ждём успешного результата, но логируем ID если вернулся
         const eventId = await calendarService.createEventForAppointment(
           appointment,
-          timezone
+          timezone,
         );
         if (eventId) {
           // логируем успешную синхронизацию
           console.log(
-            `Google Calendar event created: ${eventId} for appointment ${appointment.id}`
+            `Google Calendar event created: ${eventId} for appointment ${appointment.id}`,
           );
         }
       }
@@ -372,9 +372,8 @@ function createBookingService({ sheetsService, config, calendarService }) {
     // отменяем позднюю (те, что созданы позже). Это делает операцию
     // идемпотентной при параллельных запросах к одному слоту.
     try {
-      const dayAppointments = await sheetsService.getAppointmentsByDate(
-        dateStr
-      );
+      const dayAppointments =
+        await sheetsService.getAppointmentsByDate(dateStr);
 
       const overlapping = dayAppointments.filter((a) => {
         const aStart = dayjs.tz(`${a.date}T${a.timeStart}:00`, timezone);
@@ -383,7 +382,7 @@ function createBookingService({ sheetsService, config, calendarService }) {
           start.valueOf(),
           end.valueOf(),
           aStart.valueOf(),
-          aEnd.valueOf()
+          aEnd.valueOf(),
         );
       });
 
@@ -434,7 +433,7 @@ function createBookingService({ sheetsService, config, calendarService }) {
     const success = await sheetsService.updateAppointmentStatus(
       id,
       STATUSES.CANCELLED,
-      { cancelledAtUtc }
+      { cancelledAtUtc },
     );
 
     if (!success) {
@@ -455,12 +454,10 @@ function createBookingService({ sheetsService, config, calendarService }) {
     };
   }
 
- 
   async function cancelAppointmentByCode(cancelCode) {
     // Комментарий: отмена записи по коду отмены (для админа, без проверки владельца)
-    const appointment = await sheetsService.getAppointmentByCancelCode(
-      cancelCode
-    );
+    const appointment =
+      await sheetsService.getAppointmentByCancelCode(cancelCode);
 
     if (!appointment) {
       return { ok: false, reason: "appointment_not_found" };
@@ -475,7 +472,7 @@ function createBookingService({ sheetsService, config, calendarService }) {
     const success = await sheetsService.updateAppointmentStatus(
       appointment.id,
       STATUSES.CANCELLED,
-      { cancelledAtUtc }
+      { cancelledAtUtc },
     );
 
     if (!success) {

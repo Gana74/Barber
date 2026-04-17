@@ -451,7 +451,7 @@ function createBot({ config, sheetsService, calendarService }) {
   const settingsKeyboard = Markup.keyboard([
     ["Настройки расписания"],
     ["Управление услугами"],
-    ["Редактировать напоминание 21 день"],
+    ["Редактировать напоминание 28 дней"],
     ["Редактировать ссылку на чаевые"],
     ["Изменить контакты"],
     ["Забанить пользователя", "Разбанить пользователя"],
@@ -533,7 +533,7 @@ function createBot({ config, sheetsService, calendarService }) {
       "ban",
       "unban",
       "broadcast",
-      "edit_21day_reminder",
+      "edit_28day_reminder",
       "edit_tips_link",
       "edit_contacts",
     ]);
@@ -549,8 +549,8 @@ function createBot({ config, sheetsService, calendarService }) {
               ? "Отправьте Telegram ID или @username пользователя для бана. Для отмены напишите /admin_cancel"
               : action === "unban"
                 ? "Отправьте Telegram ID пользователя для разбанивания. Для отмены напишите /admin_cancel"
-                : action === "edit_21day_reminder"
-                  ? "Отправьте новый текст для напоминания через 21 день. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel"
+                : action === "edit_28day_reminder"
+                  ? "Отправьте новый текст для напоминания через 28 дней. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel"
                   : action === "edit_tips_link"
                     ? "Отправьте ссылку на чаевые (http://, https://, t.me/) или номер телефона. Для отмены напишите /admin_cancel"
                     : action === "edit_contacts"
@@ -669,16 +669,16 @@ function createBot({ config, sheetsService, calendarService }) {
     }
   });
 
-  bot.hears("Редактировать напоминание 21 день", async (ctx) => {
+  bot.hears("Редактировать напоминание 28 дней", async (ctx) => {
     if (!isAdmin(ctx)) return;
     if (ctx.session && ctx.session.mode === "admin") {
       // Показываем текущее сообщение
       try {
-        const currentMessage = await sheetsService.get21DayReminderMessage();
+        const currentMessage = await sheetsService.get28DayReminderMessage();
         await ctx.reply(
           `Текущий текст напоминания:\n\n${currentMessage}\n\nОтправьте новый текст. Используйте {clientName} для подстановки имени клиента. Для отмены напишите /admin_cancel`,
         );
-        await handleAdminAction(ctx, "edit_21day_reminder");
+        await handleAdminAction(ctx, "edit_28day_reminder");
       } catch (err) {
         await ctx.reply(
           `Ошибка при получении текущего сообщения: ${err.message}`,
@@ -2014,7 +2014,7 @@ function createBot({ config, sheetsService, calendarService }) {
       return;
     }
 
-    if (action === "edit_21day_reminder") {
+    if (action === "edit_28day_reminder") {
       const message = text;
       if (!message || message.trim().length === 0) {
         await ctx.reply(
@@ -2031,18 +2031,18 @@ function createBot({ config, sheetsService, calendarService }) {
       }
 
       try {
-        await sheetsService.set21DayReminderMessage(sanitizedMessage);
+        await sheetsService.set28DayReminderMessage(sanitizedMessage);
 
         // Логирование действия админа
         logAdminAction(
           ctx.from.id,
-          "admin_edit_21day_reminder",
+          "admin_edit_28day_reminder",
           { messageLength: sanitizedMessage.length },
           "success",
         );
 
         await ctx.reply(
-          `Текст напоминания через 21 день успешно обновлен!\n\nНовый текст:\n${sanitizedMessage}`,
+          `Текст напоминания через 28 дней успешно обновлен!\n\nНовый текст:\n${sanitizedMessage}`,
         );
       } catch (err) {
         await ctx.reply(
@@ -2050,7 +2050,7 @@ function createBot({ config, sheetsService, calendarService }) {
         );
         logError(
           ctx.from.id,
-          "admin_edit_21day_reminder",
+          "admin_edit_28day_reminder",
           { error: err.message },
           "error",
         );
