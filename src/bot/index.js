@@ -200,7 +200,7 @@ function createBot({ config, sheetsService, calendarService }) {
   bot.telegram
     .setMyCommands([
       { command: "start", description: "Начать общение с начала" },
-      { command: "services", description: "Посмотреть список услуг" },
+      { command: "book", description: "Записаться" },
       { command: "user", description: "Пользовательское меню" },
       { command: "admin", description: "Админ-меню" },
     ])
@@ -252,6 +252,7 @@ function createBot({ config, sheetsService, calendarService }) {
         ["Записаться 💇‍♂️"],
         ["Мои записи"],
         ["Как добраться 🗺️"],
+        ["Прайс"],
       ]).resize(),
     );
   });
@@ -339,15 +340,26 @@ function createBot({ config, sheetsService, calendarService }) {
     await ctx.scene.enter("booking");
   });
 
-  bot.command("services", async (ctx) => {
+  bot.hears(["Прайс", "прайс"], async (ctx) => {
+    try {
+      await ctx.scene.leave();
+    } catch (e) {}
+
     const services = getServiceList();
+    if (!services || !services.length) {
+      await ctx.reply("Прайс пока не настроен. Обратитесь к администратору.");
+      return;
+    }
+
     const text = services
       .map((s) => {
-        const priceText = s.price !== null ? ` — ${s.price} ₽` : "";
+        const priceText =
+          s.price !== null ? ` — ${s.price} ₽` : " — цена не указана";
         return `- ${s.name}${priceText} (${s.durationMin} мин)`;
       })
       .join("\n");
-    await ctx.reply(`Список услуг:\n${text}`);
+
+    await ctx.reply(`Прайс услуг:\n${text}`);
   });
 
   bot.command("cancel", async (ctx) => {
@@ -494,6 +506,7 @@ function createBot({ config, sheetsService, calendarService }) {
         ["Записаться 💇‍♂️"],
         ["Мои записи"],
         ["Как добраться 🗺️"],
+        ["Прайс"],
       ]).resize(),
     );
   });
