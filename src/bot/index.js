@@ -27,6 +27,7 @@ const dayjs = require("dayjs");
 const timezonePlugin = require("dayjs/plugin/timezone");
 const utc = require("dayjs/plugin/utc");
 const revenueStats = require("../services/revenueStats");
+const { userKeyboard } = require("./keyboards/userKeyboard");
 
 dayjs.extend(timezonePlugin);
 dayjs.extend(utc);
@@ -98,6 +99,19 @@ function cleanupSessionsFile({ maxSessions = 150, inactiveDays = 30 } = {}) {
 
 function createBot({ config, sheetsService, calendarService }) {
   const bot = new Telegraf(config.botToken);
+  const sendUserMenu = async (
+    ctx,
+    message = "Режим пользователя.\n\n👇 Выберите действие с помощью кнопок ниже:",
+  ) => {
+    await ctx.reply(message, userKeyboard());
+  };
+
+  const resetUserFlow = async (ctx) => {
+    try {
+      await ctx.scene.leave();
+    } catch (e) {}
+    ctx.session = {};
+  };
 
   // Предотвращаем застревание пользователей в сценах при рестарте бота.
   // Если в файле сессий есть активные сцены — удаляем поле __scenes,
@@ -171,6 +185,15 @@ function createBot({ config, sheetsService, calendarService }) {
     createBookingScene({ bookingService, sheetsService, config }),
   ]);
 
+  // Перехватываем /start до stage.middleware, чтобы гарантированно сбрасывать wizard.
+  bot.use(async (ctx, next) => {
+    const text = ctx.message && ctx.message.text;
+    if (typeof text === "string" && text.trim().startsWith("/start")) {
+      await resetUserFlow(ctx);
+    }
+    return next();
+  });
+
   bot.use(stage.middleware());
 
   // Rate limiting middleware - подключаем перед всеми обработчиками
@@ -201,6 +224,7 @@ function createBot({ config, sheetsService, calendarService }) {
     .setMyCommands([
       { command: "start", description: "Начать общение с начала" },
       { command: "book", description: "Записаться" },
+      { command: "price", description: "Прайс услуг" },
       { command: "user", description: "Пользовательское меню" },
       { command: "admin", description: "Админ-меню" },
     ])
@@ -219,10 +243,7 @@ function createBot({ config, sheetsService, calendarService }) {
   }
 
   bot.start(async (ctx) => {
-    try {
-      await ctx.scene.leave();
-    } catch (e) {}
-    ctx.session = {};
+    await resetUserFlow(ctx);
 
     const name = ctx.from.first_name || "друг";
 
@@ -246,15 +267,7 @@ function createBot({ config, sheetsService, calendarService }) {
       console.warn("Failed to send portfolio media group:", e.message || e);
     }
 
-    await ctx.reply(
-      "👇 Выберите действие с помощью кнопок ниже:",
-      Markup.keyboard([
-        ["Записаться 💇‍♂️"],
-        ["Мои записи"],
-        ["Как добраться 🗺️"],
-        ["Прайс"],
-      ]).resize(),
-    );
+    await sendUserMenu(ctx, "👇 Выберите действие с помощью кнопок ниже:");
   });
 
   bot.hears("Записаться 💇‍♂️", async (ctx) => {
@@ -340,7 +353,7 @@ function createBot({ config, sheetsService, calendarService }) {
     await ctx.scene.enter("booking");
   });
 
-  bot.hears(["Прайс", "прайс"], async (ctx) => {
+  const sendPriceList = async (ctx) => {
     try {
       await ctx.scene.leave();
     } catch (e) {}
@@ -360,7 +373,10 @@ function createBot({ config, sheetsService, calendarService }) {
       .join("\n");
 
     await ctx.reply(`Прайс услуг:\n${text}`);
-  });
+  };
+
+  bot.command("price", sendPriceList);
+  bot.hears(["Прайс", "прайс"], sendPriceList);
 
   bot.command("cancel", async (ctx) => {
     try {
@@ -500,15 +516,7 @@ function createBot({ config, sheetsService, calendarService }) {
   bot.command("user", async (ctx) => {
     ctx.session = ctx.session || {};
     ctx.session.mode = "user";
-    await ctx.reply(
-      "Режим пользователя.\n\n👇 Выберите действие с помощью кнопок ниже:",
-      Markup.keyboard([
-        ["Записаться 💇‍♂️"],
-        ["Мои записи"],
-        ["Как добраться 🗺️"],
-        ["Прайс"],
-      ]).resize(),
-    );
+    await sendUserMenu(ctx);
   });
 
   async function handleAdminAction(ctx, action) {
@@ -959,14 +967,7 @@ function createBot({ config, sheetsService, calendarService }) {
     if (!isAdmin(ctx)) return;
     ctx.session = ctx.session || {};
     ctx.session.mode = "user";
-    await ctx.reply(
-      "Режим пользователя.\n\n👇 Выберите действие с помощью кнопок ниже:",
-      Markup.keyboard([
-        ["Записаться 💇‍♂️"],
-        ["Мои записи"],
-        ["Как добраться 🗺️"],
-      ]).resize(),
-    );
+    await sendUserMenu(ctx);
   });
 
   // --- Финансовая статистика ---

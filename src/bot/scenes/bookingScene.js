@@ -9,6 +9,7 @@ const { formatDate } = require("../../utils/formatDate");
 const { validateName, sanitizeText } = require("../../utils/security");
 const { logAction } = require("../../utils/logger");
 const { safeSendMessage } = require("../../utils/safeMessaging");
+const { userKeyboard } = require("../keyboards/userKeyboard");
 
 function formatDateLabel(d) {
   return d.format("DD.MM (dd)");
@@ -157,6 +158,17 @@ async function buildAvailableDateSet({
 }
 
 function createBookingScene({ bookingService, sheetsService, config }) {
+  const returnToUserMenu = async (
+    ctx,
+    message = "Вы вернулись в главное меню.\n\n👇 Выберите действие с помощью кнопок ниже:",
+  ) => {
+    try {
+      await ctx.scene.leave();
+    } catch (e) {}
+
+    await ctx.reply(message, userKeyboard());
+  };
+
   const bookingScene = new Scenes.WizardScene(
     "booking",
     // Шаг 1: выбор услуги
@@ -209,21 +221,10 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
       // Обработка кнопки "Назад": возвращаем пользователя в главное меню
       if (text === "Назад ⬅️") {
-        try {
-          await ctx.scene.leave();
-        } catch (e) {
-          // игнорируем ошибки при выходе из сцены
-        }
-
-        await ctx.reply(
+        await returnToUserMenu(
+          ctx,
           "Ок, возвращаю в главное меню.\n\n👇 Выберите действие с помощью кнопок ниже:",
-          Markup.keyboard([
-            ["Записаться 💇‍♂️"],
-            ["Мои записи"],
-            ["Как добраться 🗺️"],
-          ]).resize(),
         );
-
         return;
       }
 
@@ -273,18 +274,9 @@ function createBookingScene({ bookingService, sheetsService, config }) {
     async (ctx) => {
       // Обработка текстового сообщения "Назад"
       if (ctx.message && ctx.message.text === "Назад ⬅️") {
-        try {
-          await ctx.scene.leave();
-        } catch (e) {
-          // игнорируем ошибки при выходе из сцены
-        }
-        await ctx.reply(
+        await returnToUserMenu(
+          ctx,
           "Ок, возвращаю в главное меню.\n\n👇 Выберите действие с помощью кнопок ниже:",
-          Markup.keyboard([
-            ["Записаться 💇‍♂️"],
-            ["Мои записи"],
-            ["Как добраться 🗺️"],
-          ]).resize(),
         );
         return;
       }
@@ -709,7 +701,8 @@ function createBookingScene({ bookingService, sheetsService, config }) {
         "Что-то пошло не так, начнём заново: /book",
         Markup.removeKeyboard(),
       );
-      return ctx.scene.leave();
+      await returnToUserMenu(ctx);
+      return;
     },
     // Шаг 6: подтверждение (callback confirm/cancel)
     async (ctx) => {
@@ -723,11 +716,11 @@ function createBookingScene({ bookingService, sheetsService, config }) {
 
       if (data === "cancel") {
         await ctx.answerCbQuery("Запись отменена.");
-        await ctx.reply(
-          "Ок, ничего не записываю. Если нужно — начни заново: /book",
-          Markup.removeKeyboard(),
+        await returnToUserMenu(
+          ctx,
+          "Ок, ничего не записываю.\n\n👇 Выберите действие с помощью кнопок ниже:",
         );
-        return ctx.scene.leave();
+        return;
       }
 
       if (data !== "confirm") {
@@ -773,17 +766,9 @@ function createBookingScene({ bookingService, sheetsService, config }) {
               `У вас уже ${existingCount} активных записей.\n` +
               `Ограничение: не более 3 активных записей от одного пользователя.\n\n` +
               `Пожалуйста, отмените ненужные записи через "Мои записи" или свяжитесь с администрацией.`,
-            Markup.removeKeyboard(),
           );
-          await ctx.reply(
-            "Вы вернулись в главное меню.\n\n👇 Выберите действие с помощью кнопок ниже:",
-            Markup.keyboard([
-              ["Записаться 💇‍♂️"],
-              ["Мои записи"],
-              ["Как добраться 🗺️"],
-            ]).resize(),
-          );
-          return ctx.scene.leave();
+          await returnToUserMenu(ctx);
+          return;
         }
 
         if (result.reason === "slot_taken") {
@@ -804,10 +789,11 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           );
 
           if (!slots.length) {
-            await ctx.reply(
+            await returnToUserMenu(
+              ctx,
               "На этот день больше нет свободных слотов. Попробуй выбрать другую дату командой /book.",
             );
-            return ctx.scene.leave();
+            return;
           }
 
           const keyboard = [];
@@ -833,16 +819,17 @@ function createBookingScene({ bookingService, sheetsService, config }) {
           return ctx.wizard.selectStep(3);
         } else {
           if (result.reason === "closed") {
-            await ctx.reply(
+            await returnToUserMenu(
+              ctx,
               "Нельзя создать запись: в этот день у меня выходной. Попробуй другую дату.",
             );
-            return ctx.scene.leave();
+            return;
           }
-          await ctx.reply(
+          await returnToUserMenu(
+            ctx,
             "Не удалось создать запись из-за ошибки. Попробуй ещё раз позже.",
-            Markup.removeKeyboard(),
           );
-          return ctx.scene.leave();
+          return;
         }
       }
 
@@ -904,11 +891,7 @@ function createBookingScene({ bookingService, sheetsService, config }) {
       // Возвращаем пользователя в главное меню
       await ctx.reply(
         "Запись завершена! Вы вернулись в главное меню.\n\n👇 Выберите действие с помощью кнопок ниже:",
-        Markup.keyboard([
-          ["Записаться 💇‍♂️"],
-          ["Мои записи"],
-          ["Как добраться 🗺️"],
-        ]).resize(),
+        userKeyboard(),
       );
 
       return ctx.scene.leave();
