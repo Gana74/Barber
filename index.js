@@ -100,8 +100,42 @@ async function main() {
   setupReminders({ bot, config, sheetsService, calendarService });
 
   console.log("Launching Telegram bot...");
-  // Запуск long polling
-  await bot.launch();
+  // Запуск long polling.
+  // Внутри Telegraf `launch()` делает запрос `getMe`, поэтому при временных
+  // сетевых сбоях (ETIMEDOUT/ECONNRESET) лучше ретраить, а не падать процессом.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const isTransientNetworkError = (err) => {
+    const code = err && (err.code || err.errno);
+    return (
+      code === "ETIMEDOUT" ||
+      code === "ECONNRESET" ||
+      code === "EAI_AGAIN" ||
+      code === "ENOTFOUND" ||
+      code === "ECONNREFUSED"
+    );
+  };
+
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    attempt += 1;
+    try {
+      await bot.launch();
+      break;
+    } catch (err) {
+      if (!isTransientNetworkError(err)) {
+        throw err;
+      }
+
+      const delayMs = Math.min(60_000, 2000 * Math.pow(2, attempt - 1));
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Telegram launch failed (${err.code || err.errno || "unknown"}). ` +
+          `Retrying in ${Math.round(delayMs / 1000)}s...`,
+      );
+      await sleep(delayMs);
+    }
+  }
   console.log("Bot is up. Waiting for updates...");
 
   // Комментарий: graceful shutdown

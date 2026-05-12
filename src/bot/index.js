@@ -106,6 +106,24 @@ function createBot({ config, sheetsService, calendarService }) {
     await ctx.reply(message, userKeyboard());
   };
 
+  const safeAnswerCbQuery = async (ctx, text) => {
+    try {
+      await ctx.answerCbQuery(text);
+    } catch (e) {
+      const msg = String(e && e.message ? e.message : "");
+      // Telegram может вернуть 400, если callback слишком старый (кнопку нажали поздно)
+      if (msg.includes("query is too old") || msg.includes("query ID is invalid")) {
+        return;
+      }
+      throw e;
+    }
+  };
+
+  bot.catch((err, ctx) => {
+    // eslint-disable-next-line no-console
+    console.error("Unhandled error while processing", ctx.update, err);
+  });
+
   const resetUserFlow = async (ctx) => {
     try {
       await ctx.scene.leave();
@@ -991,12 +1009,12 @@ function createBot({ config, sheetsService, calendarService }) {
 
   bot.action(/revenue:(.+)/, async (ctx) => {
     if (!isAdmin(ctx)) {
-      await ctx.answerCbQuery("Доступ запрещен");
+      await safeAnswerCbQuery(ctx, "Доступ запрещен");
       return;
     }
 
     const period = ctx.match[1];
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
 
     if (period === "back") {
       await ctx.reply(
