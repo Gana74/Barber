@@ -11,6 +11,8 @@ const {
 dayjs.extend(utc);
 dayjs.extend(timezonePlugin);
 
+const SLOT_STEP_MINUTES = 30;
+
 // Статусы на русском
 const STATUSES = {
   ACTIVE: "активна",
@@ -117,7 +119,7 @@ function buildSlotsForDay({
 
     // Комментарий: не даём выбирать прошлое время
     if (slotStart.isBefore(now)) {
-      cursor = cursor.add(15, "minute");
+      cursor = cursor.add(SLOT_STEP_MINUTES, "minute");
       continue;
     }
 
@@ -138,8 +140,8 @@ function buildSlotsForDay({
       });
     }
 
-    // Шаг 15 минут для гибкости
-    cursor = cursor.add(15, "minute");
+    // Шаг 30 минут между слотами
+    cursor = cursor.add(SLOT_STEP_MINUTES, "minute");
   }
 
   return slots;
